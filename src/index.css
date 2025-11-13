@@ -1,0 +1,10 @@
+@import 'reactflow/dist/style.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Open Dyslexic', sans-serif;
+  @apply font-open-dyslexic;
+}
