@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { supabase } from '../supabaseClient';
 import './index.css';
 
 import LoginPage from './pages/LoginPage';
@@ -13,16 +14,49 @@ import SettingsPage from './pages/SettingsPage';
 
 export default function App() {
   const [page, setPage] = useState('login');
-  const [activeScript, setActiveScript] = useState(null); // Unified state for the current script
+  const [activeScript, setActiveScript] = useState(null);
+  const [session, setSession] = useState(null);
+
+  useEffect(() => {
+    // Check for an existing session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) {
+        setPage('dashboard');
+      }
+    });
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session && page !== 'dashboard') {
+        setPage('dashboard');
+      } else if (!session && page !== 'login') {
+        setPage('login');
+      }
+    });
+
+    // Cleanup subscription on unmount
+    return () => subscription.unsubscribe();
+  }, [page]); // Re-run effect if page changes to handle navigation correctly
 
   const renderPage = () => {
+    // If there's no session, only show login/signup pages
+    if (!session) {
+      switch (page) {
+        case 'login':
+          return <LoginPage setPage={setPage} />;
+        case 'create-account':
+          return <CreateAccountPage setPage={setPage} />;
+        case 'forgot-password':
+          return <ForgotPasswordPage setPage={setPage} />;
+        default:
+          return <LoginPage setPage={setPage} />;
+      }
+    }
+
+    // If there is a session, show the authenticated pages
     switch (page) {
-      case 'login':
-        return <LoginPage setPage={setPage} />;
-      case 'create-account':
-        return <CreateAccountPage setPage={setPage} />;
-      case 'forgot-password':
-        return <ForgotPasswordPage setPage={setPage} />;
       case 'dashboard':
         return <DashboardPage setPage={setPage} setActiveScript={setActiveScript} />;
       case 'script-builder':
@@ -32,11 +66,11 @@ export default function App() {
       case 'feedback':
         return <FeedbackPage setPage={setPage} />;
       case 'saved-scripts':
-        return <SavedScriptsPage setPage={setPage} />;
+        return <SavedScriptsPage setPage={setPage} setActiveScript={setActiveScript} />;
       case 'settings':
         return <SettingsPage setPage={setPage} />;
       default:
-        return <LoginPage setPage={setPage} />;
+        return <DashboardPage setPage={setPage} setActiveScript={setActiveScript} />; // Default to dashboard when logged in
     }
   };
 

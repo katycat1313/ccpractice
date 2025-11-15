@@ -14,6 +14,8 @@ import Navbar from '../components/Navbar';
 import ScriptNode from '../components/Node';
 import DifficultyModal from '../components/DifficultyModal'; // Import the new modal
 import { Save, Play, Trash2 } from 'lucide-react';
+import { supabase } from '../../supabaseClient.js';
+import { getUser } from '../lib/supabaseAuth';
 
 const nodeTypes = {
   script: ScriptNode,
@@ -29,6 +31,7 @@ const ScriptBuilder = ({ setPage, activeScript, setActiveScript }) => {
   const [scriptName, setScriptName] = useState('New Script');
   const [menu, setMenu] = useState(null);
   const [isDifficultyModalOpen, setIsDifficultyModalOpen] = useState(false); // New state for modal
+  const [saveStatus, setSaveStatus] = useState(null);
 
   const onNodesChange = useCallback((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), []);
   const onEdgesChange = useCallback((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), []);
@@ -53,6 +56,7 @@ const ScriptBuilder = ({ setPage, activeScript, setActiveScript }) => {
       id: `e-${parentNodeId}-${newNodeId}`,
       source: parentNodeId,
       target: newNodeId,
+      sourceHandle: null,
     };
 
     setNodes((currentNodes) => currentNodes.concat(newNode));
@@ -107,6 +111,54 @@ const ScriptBuilder = ({ setPage, activeScript, setActiveScript }) => {
 
   const onPaneClick = () => setMenu(null);
 
+  const handleSave = async () => {
+    setSaveStatus('saving');
+    const u = await getUser();
+    const user = u?.data?.user;
+
+    if (!user) {
+      setSaveStatus('no-user');
+      setTimeout(() => setPage('login'), 800);
+      return;
+    }
+
+    const payload = {
+      name: scriptName,
+      nodes,
+      edges,
+      metadata: activeScript?.metadata || { difficulty: undefined },
+    };
+
+    let response;
+    if (activeScript && activeScript.id) {
+      // Update existing script
+      response = await supabase
+        .from('scripts')
+        .update(payload)
+        .eq('id', activeScript.id)
+        .select();
+    } else {
+      // Create new script
+      payload.user_id = user.id;
+      response = await supabase
+        .from('scripts')
+        .insert(payload)
+        .select();
+    }
+
+    const { data, error } = response;
+
+    if (error) {
+      console.error('Save error', error);
+      setSaveStatus('error');
+    } else {
+      setActiveScript(data[0]);
+      setSaveStatus('saved');
+    }
+
+    setTimeout(() => setSaveStatus(null), 2000);
+  };
+
   const handleStartPractice = (difficulty) => {
     setActiveScript({ nodes, edges, difficulty });
     setIsDifficultyModalOpen(false);
@@ -123,9 +175,9 @@ const ScriptBuilder = ({ setPage, activeScript, setActiveScript }) => {
           onChange={(e) => setScriptName(e.target.value)}
           className="font-bold text-lg border-transparent focus:ring-0 focus:border-transparent bg-transparent"
         />
-        <div className="flex items-center gap-2">
-          <button className="flex items-center gap-2 bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700">
-            <Save size={18} /> Save Script
+          <div className="flex items-center gap-2">
+          <button onClick={handleSave} className="flex items-center gap-2 bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700">
+            <Save size={18} /> {saveStatus === 'saving' ? 'Saving…' : 'Save Script'}
           </button>
           <button onClick={() => setIsDifficultyModalOpen(true)} className="flex items-center gap-2 bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700">
             <Play size={18} /> Practice Script
