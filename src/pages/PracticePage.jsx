@@ -346,7 +346,7 @@ export default function PracticePage({ setPage, activeScript, setActiveScript })
 
 
 
-    }, [isPaused, currentNodeId, nextPossibleNodes]);
+    }, [isPaused, handleSkip]);
 
 
 

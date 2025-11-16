@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+  #!/usr/bin/env node
 /*
   Synthetic cold-call script generator
   - Produces a JSONL file where each line is a conversation object with nodes/edges and metadata
@@ -79,6 +79,8 @@ const DIFFICULTIES = ['Easy', 'Medium', 'Hard'];
 function rand(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
+
+function pluralize(n, s) { return n === 1 ? s : s + 's'; }
 
 function makeConversationTemplate(opts) {
   // Build a short 3-7 turn script alternating You/Prospect

@@ -1,5 +1,5 @@
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.81.1';
 import { corsHeaders } from '../_shared/cors.ts';
 
 // The main function that will be executed when the edge function is called
@@ -45,7 +45,6 @@ serve(async (req) => {
       - Customer Pain Point: ${painPoint}
       - Call to Action: ${cta}
 
-      Return ONLY a single, valid JSON object. Do not include any other text, markdown, or explanations.
       The JSON object must have two keys: "nodes" and "edges".
       - "nodes" should be an array of 5 objects, each with "id", "type" ('script'), "position", and "data" ({ "speaker", "text" }).
         - Alternate the "speaker" between "You" and "Prospect". Start with "You".
@@ -61,6 +60,7 @@ serve(async (req) => {
         generationConfig: {
           temperature: 0.7,
           maxOutputTokens: 2048,
+          response_mime_type: 'application/json',
         },
       }),
     });
@@ -72,8 +72,17 @@ serve(async (req) => {
     }
 
     const geminiData = await geminiResponse.json();
-    const jsonString = geminiData.candidates[0].content.parts[0].text.replace(/```json|```/g, '').trim();
-    const scriptData = JSON.parse(jsonString);
+    console.log('Gemini response data:', JSON.stringify(geminiData, null, 2));
+    
+    if (!geminiData.candidates || !geminiData.candidates[0] || !geminiData.candidates[0].content || !geminiData.candidates[0].content.parts || !geminiData.candidates[0].content.parts[0]) {
+      console.error('Invalid Gemini response structure:', geminiData);
+      return new Response(JSON.stringify({ error: 'Failed to parse script from AI response.' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // With JSON mode, the 'text' part is a JSON string that needs to be parsed.
+    const scriptJson = geminiData.candidates[0].content.parts[0].text;
+    const scriptData = JSON.parse(scriptJson);
+    console.log('Parsed script data:', JSON.stringify(scriptData, null, 2));
 
     // --- 4. SAVE TO DATABASE ---
     const scriptName = `AI Script for ${painPoint}`;
