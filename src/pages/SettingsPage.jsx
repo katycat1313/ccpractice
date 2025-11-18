@@ -1,13 +1,31 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Navbar from '../components/Navbar';
 import { User, Key, Save } from 'lucide-react';
+import { getUser, updateUser } from '../lib/supabaseAuth';
 
-export default function SettingsPage({ setPage }) {
+export default function SettingsPage() {
   const [profile, setProfile] = useState({
-    name: 'Alex',
-    role: 'Sales Development Rep',
+    name: '',
+    role: '',
   });
   const [apiKey, setApiKey] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+
+  useEffect(() => {
+    async function loadProfile() {
+      const { data: { user } } = await getUser();
+      if (user) {
+        setProfile({
+          name: user.user_metadata.name || '',
+          role: user.user_metadata.role || '',
+        });
+      }
+      setLoading(false);
+    }
+    loadProfile();
+  }, []);
 
   const handleProfileChange = (e) => {
     const { name, value } = e.target;
@@ -18,21 +36,34 @@ export default function SettingsPage({ setPage }) {
     setApiKey(e.target.value);
   };
 
-  const handleSave = () => {
-    // In a real app, this would save to a backend.
-    // For now, it just logs to the console.
-    console.log('Saving Profile:', profile);
-    console.log('Saving API Key:', apiKey);
-    alert('Settings saved! (Check console for values)');
+  const handleSave = async () => {
+    setError(null);
+    setSuccess(null);
+    const { error } = await updateUser({ data: profile });
+    if (error) {
+      setError(error.message);
+    } else {
+      setSuccess('Profile updated successfully!');
+    }
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center">
+        <p>Loading...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col font-open-dyslexic">
-      <Navbar setPage={setPage} />
+      <Navbar />
       <div className="max-w-4xl mx-auto p-8 w-full">
         <h1 className="text-4xl font-bold mb-8 text-gray-900">Settings</h1>
 
-        {/* Profile Information Section */}
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        {success && <p className="text-sm text-green-600">{success}</p>}
+
         <div className="bg-white rounded-lg shadow-md p-8 mb-8">
           <h2 className="text-2xl font-semibold mb-6 flex items-center text-gray-800">
             <User className="mr-3" /> Profile Information
@@ -61,7 +92,6 @@ export default function SettingsPage({ setPage }) {
           </div>
         </div>
 
-        {/* API Key Section */}
         <div className="bg-white rounded-lg shadow-md p-8">
           <h2 className="text-2xl font-semibold mb-6 flex items-center text-gray-800">
             <Key className="mr-3" /> API Configuration
@@ -81,7 +111,6 @@ export default function SettingsPage({ setPage }) {
           </div>
         </div>
 
-        {/* Save Button */}
         <div className="mt-8 flex justify-end">
           <button
             onClick={handleSave}

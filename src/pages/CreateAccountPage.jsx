@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { signUp } from '../lib/supabaseAuth';
+import { useNavigate, Link } from 'react-router-dom';
 
-export default function CreateAccountPage({ setPage }) {
+export default function CreateAccountPage() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -18,8 +20,7 @@ export default function CreateAccountPage({ setPage }) {
       setError(res.error.message || JSON.stringify(res.error));
       return;
     }
-    // On success, navigate to dashboard. Supabase will also send confirmation email depending on settings.
-    setPage('dashboard');
+    navigate('/dashboard');
   };
 
   return (
@@ -66,7 +67,7 @@ export default function CreateAccountPage({ setPage }) {
           <div className="mt-6 text-center">
             <p className="text-sm">
               Already have an account?{' '}
-              <a href="#" onClick={() => setPage('login')} className="font-medium text-indigo-600 hover:text-indigo-500">Sign in</a>
+              <Link to="/login" className="font-medium text-indigo-600 hover:text-indigo-500">Sign in</Link>
             </p>
           </div>
         </div>

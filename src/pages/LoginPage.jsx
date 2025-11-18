@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { supabase } from '../supabaseClient';
-import { useNavigate } from 'react-router-dom';
+import { supabase } from '../../supabaseClient';
+import { useNavigate, Link } from 'react-router-dom';
 
-export default function LoginPage({ setPage }) {
+export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -33,7 +33,7 @@ export default function LoginPage({ setPage }) {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-open-dyslexic">
+    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <h1 className="text-center text-4xl font-bold text-indigo-600 mb-2">
           ScriptMaster
@@ -109,9 +109,9 @@ export default function LoginPage({ setPage }) {
               </div>
 
               <div className="text-base">
-                <a href="#" onClick={() => setPage('forgot-password')} className="font-medium text-indigo-600 hover:text-indigo-500">
+                <Link to="/forgot-password" className="font-medium text-indigo-600 hover:text-indigo-500">
                   Forgot password?
-                </a>
+                </Link>
               </div>
             </div>
 
@@ -129,13 +129,12 @@ export default function LoginPage({ setPage }) {
           <div className="mt-8 text-center border-t border-gray-200 pt-6">
             <p className="text-base text-gray-700">
               Don't have an account?{' '}
-              <a
-                href="#"
-                onClick={() => setPage('create-account')}
+              <Link
+                to="/create-account"
                 className="font-semibold text-indigo-600 hover:text-indigo-500"
               >
                 Create one
-              </a>
+              </Link>
             </p>
           </div>
         </div>

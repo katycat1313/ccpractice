@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import './index.css';
 import 'reactflow/dist/style.css';
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 
 import LoginPage from './pages/LoginPage';
 import CreateAccountPage from './pages/CreateAccountPage';
@@ -14,70 +15,55 @@ import SavedScriptsPage from './pages/SavedScriptsPage';
 import SettingsPage from './pages/SettingsPage';
 
 export default function App() {
-  const [page, setPage] = useState('login');
-  const [activeScript, setActiveScript] = useState(null);
+  const [script, setScript] = useState(null);
   const [session, setSession] = useState(null);
+  const [feedback, setFeedback] = useState(null);
+  const [transcript, setTranscript] = useState('');
+  const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
-    // Check for an existing session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) {
-        setPage('dashboard');
+      if (session && (location.pathname === '/login' || location.pathname === '/create-account' || location.pathname === '/forgot-password')) {
+        navigate('/dashboard');
+      } else if (!session && location.pathname !== '/login' && location.pathname !== '/create-account' && location.pathname !== '/forgot-password') {
+        navigate('/login');
       }
     });
 
-    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (session && page !== 'dashboard') {
-        setPage('dashboard');
-      } else if (!session && page !== 'login') {
-        setPage('login');
+      if (session && (location.pathname === '/login' || location.pathname === '/create-account' || location.pathname === '/forgot-password')) {
+        navigate('/dashboard');
+      } else if (!session && location.pathname !== '/login' && location.pathname !== '/create-account' && location.pathname !== '/forgot-password') {
+        navigate('/login');
       }
     });
 
-    // Cleanup subscription on unmount
     return () => subscription.unsubscribe();
-  }, [page]); // Re-run effect if page changes to handle navigation correctly
-
-  const renderPage = () => {
-    // If there's no session, only show login/signup pages
-    if (!session) {
-      switch (page) {
-        case 'login':
-          return <LoginPage setPage={setPage} />;
-        case 'create-account':
-          return <CreateAccountPage setPage={setPage} />;
-        case 'forgot-password':
-          return <ForgotPasswordPage setPage={setPage} />;
-        default:
-          return <LoginPage setPage={setPage} />;
-      }
-    }
-
-    // If there is a session, show the authenticated pages
-    switch (page) {
-      case 'dashboard':
-        return <DashboardPage setPage={setPage} setActiveScript={setActiveScript} />;
-      case 'script-builder':
-        return <ScriptBuilderPage setPage={setPage} activeScript={activeScript} setActiveScript={setActiveScript} />;
-      case 'practice':
-        return <PracticePage setPage={setPage} activeScript={activeScript} setActiveScript={setActiveScript} />;
-      case 'feedback':
-        return <FeedbackPage setPage={setPage} />;
-      case 'saved-scripts':
-        return <SavedScriptsPage setPage={setPage} setActiveScript={setActiveScript} />;
-      case 'settings':
-        return <SettingsPage setPage={setPage} />;
-      default:
-        return <DashboardPage setPage={setPage} setActiveScript={setActiveScript} />; // Default to dashboard when logged in
-    }
-  };
+  }, [navigate, location.pathname]);
 
   return (
-    <div>
-      {renderPage()}
-    </div>
+    <Routes>
+      {!session ? (
+        <>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/create-account" element={<CreateAccountPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="*" element={<LoginPage />} />
+        </>
+      ) : (
+        <>
+          <Route path="/dashboard" element={<DashboardPage setScript={setScript} />} />
+          <Route path="/script-builder" element={<ScriptBuilderPage script={script} setScript={setScript} />} />
+          <Route path="/practice" element={<PracticePage script={script} setScript={setScript} setFeedback={setFeedback} setTranscript={setTranscript} />} />
+          <Route path="/feedback" element={<FeedbackPage feedback={feedback} transcript={transcript} script={script} />} />
+          <Route path="/saved-scripts" element={<SavedScriptsPage setScript={setScript} />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<DashboardPage setScript={setScript} />} />
+        </>
+      )}
+    </Routes>
   );
 }

@@ -54,3 +54,12 @@ export async function getSession() {
     return { error: err };
   }
 }
+
+export async function updateUser(data) {
+  try {
+    const res = await supabase.auth.updateUser({ data });
+    return res;
+  } catch (err) {
+    return { error: err };
+  }
+}

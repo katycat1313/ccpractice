@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import Navbar from '../components/Navbar';
 import { ThumbsUp, TrendingUp, Send, User, Bot } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const FeedbackCard = ({ title, items, icon, color }) => {
   const Icon = icon;
@@ -32,11 +33,12 @@ const ChatMessage = ({ message }) => {
   );
 };
 
-export default function FeedbackPage({ setPage }) {
+export default function FeedbackPage({ feedback, transcript }) {
   const [messages, setMessages] = useState([
     { sender: 'ai', text: "Ready to dive deeper into your feedback? Ask me anything about the session or for specific advice!" },
   ]);
   const [input, setInput] = useState('');
+  const navigate = useNavigate();
 
   const handleSend = () => {
     if (!input.trim()) return;
@@ -49,23 +51,26 @@ export default function FeedbackPage({ setPage }) {
     setInput('');
   };
 
-  const strengths = ["Clear and confident opening.", "Good use of the customer's name.", "Strong closing statement."];
-  const improvements = ["Try to ask more open-ended questions.", "Pace was a bit fast during the closing.", "Listen for buying signals more actively."];
+  const strengths = feedback?.strengths || ["No feedback generated."];
+  const improvements = feedback?.improvements || ["No feedback generated."];
 
   return (
     <div className="min-h-screen bg-gray-900 text-white flex flex-col font-open-dyslexic">
-      <Navbar setPage={setPage} />
+      <Navbar />
       <div className="flex-grow p-8 overflow-y-auto">
         <div className="max-w-7xl mx-auto">
           <h1 className="text-4xl font-bold mb-8 text-center">Practice Session Feedback</h1>
           
-          {/* Summary Section */}
           <div className="grid md:grid-cols-2 gap-8 mb-12">
             <FeedbackCard title="What Went Well" items={strengths} icon={ThumbsUp} color="text-green-400" />
             <FeedbackCard title="Areas for Improvement" items={improvements} icon={TrendingUp} color="text-yellow-400" />
           </div>
 
-          {/* Conversational Coach Section */}
+          <div className="bg-gray-800 rounded-lg p-6 mb-12">
+            <h3 className="text-lg font-semibold mb-4 text-gray-300">Your Transcript</h3>
+            <p className="text-gray-400 whitespace-pre-wrap">{transcript || 'No transcript available.'}</p>
+          </div>
+
           <h2 className="text-3xl font-bold mb-6 text-center">Conversational Coach</h2>
           <div className="bg-gray-800 rounded-lg p-6 max-w-4xl mx-auto">
             <div className="space-y-6 h-96 overflow-y-auto mb-4 pr-4">
@@ -86,6 +91,12 @@ export default function FeedbackPage({ setPage }) {
                 <Send size={24} />
               </button>
             </div>
+          </div>
+
+          <div className="mt-12 text-center">
+            <button onClick={() => navigate('/dashboard')} className="bg-indigo-600 text-white font-semibold py-3 px-6 rounded-lg">
+              Back to Dashboard
+            </button>
           </div>
         </div>
       </div>

@@ -12,10 +12,11 @@ import 'reactflow/dist/style.css';
 
 import Navbar from '../components/Navbar';
 import ScriptNode from '../components/Node';
-import DifficultyModal from '../components/DifficultyModal'; // Import the new modal
-import { Save, Play, Trash2 } from 'lucide-react';
+import DifficultyModal from '../components/DifficultyModal';
+import { Save, Play, Trash2, CheckCircle2, User, Users } from 'lucide-react';
 import { supabase } from '../../supabaseClient.js';
 import { getUser } from '../lib/supabaseAuth';
+import { useNavigate } from 'react-router-dom';
 
 const nodeTypes = {
   script: ScriptNode,
@@ -24,14 +25,14 @@ const nodeTypes = {
 let id = 1;
 const getId = () => `${id++}`;
 
-// This is the main component where the logic resides.
-const ScriptBuilder = ({ setPage, activeScript, setActiveScript }) => {
+const ScriptBuilder = ({ script, setScript }) => {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [scriptName, setScriptName] = useState('New Script');
   const [menu, setMenu] = useState(null);
-  const [isDifficultyModalOpen, setIsDifficultyModalOpen] = useState(false); // New state for modal
+  const [isDifficultyModalOpen, setIsDifficultyModalOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null);
+  const navigate = useNavigate();
 
   const onNodesChange = useCallback((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), []);
   const onEdgesChange = useCallback((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), []);
@@ -69,6 +70,25 @@ const ScriptBuilder = ({ setPage, activeScript, setActiveScript }) => {
     setMenu(null);
   }, []);
 
+  const updateNodeSpeaker = useCallback((nodeId) => {
+    setNodes((nds) =>
+      nds.map((node) => {
+        if (node.id === nodeId) {
+          const newSpeaker = node.data.speaker === 'You' ? 'Prospect' : 'You';
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              speaker: newSpeaker,
+            },
+          };
+        }
+        return node;
+      })
+    );
+    setMenu(null);
+  }, []);
+
   useEffect(() => {
     const nodesWithAddFunction = (nodesToMap) => {
       return nodesToMap.map(node => ({
@@ -80,9 +100,10 @@ const ScriptBuilder = ({ setPage, activeScript, setActiveScript }) => {
       }));
     };
 
-    if (activeScript && activeScript.nodes) {
-      setNodes(nodesWithAddFunction(activeScript.nodes));
-      setEdges(activeScript.edges || []);
+    if (script && script.nodes) {
+      setNodes(nodesWithAddFunction(script.nodes));
+      setEdges(script.edges || []);
+      setScriptName(script.name || 'New Script');
     } else {
       const initialNodeId = getId();
       setNodes([
@@ -97,8 +118,9 @@ const ScriptBuilder = ({ setPage, activeScript, setActiveScript }) => {
         },
       ]);
       setEdges([]);
+      setScriptName('New Script');
     }
-  }, [activeScript, addNode]);
+  }, [script, addNode]);
 
   const onNodeContextMenu = (event, node) => {
     event.preventDefault();
@@ -118,7 +140,7 @@ const ScriptBuilder = ({ setPage, activeScript, setActiveScript }) => {
 
     if (!user) {
       setSaveStatus('no-user');
-      setTimeout(() => setPage('login'), 800);
+      setTimeout(() => navigate('/login'), 800);
       return;
     }
 
@@ -126,19 +148,17 @@ const ScriptBuilder = ({ setPage, activeScript, setActiveScript }) => {
       name: scriptName,
       nodes,
       edges,
-      metadata: activeScript?.metadata || { difficulty: undefined },
+      metadata: script?.metadata || { difficulty: undefined },
     };
 
     let response;
-    if (activeScript && activeScript.id) {
-      // Update existing script
+    if (script && script.id) {
       response = await supabase
         .from('scripts')
         .update(payload)
-        .eq('id', activeScript.id)
+        .eq('id', script.id)
         .select();
     } else {
-      // Create new script
       payload.user_id = user.id;
       response = await supabase
         .from('scripts')
@@ -152,7 +172,7 @@ const ScriptBuilder = ({ setPage, activeScript, setActiveScript }) => {
       console.error('Save error', error);
       setSaveStatus('error');
     } else {
-      setActiveScript(data[0]);
+      setScript(data[0]);
       setSaveStatus('saved');
     }
 
@@ -160,24 +180,49 @@ const ScriptBuilder = ({ setPage, activeScript, setActiveScript }) => {
   };
 
   const handleStartPractice = (difficulty) => {
-    setActiveScript({ nodes, edges, difficulty });
+    setScript({ nodes, edges, difficulty });
     setIsDifficultyModalOpen(false);
-    setPage('practice');
+    navigate('/practice');
   };
 
   return (
     <div className="w-full h-screen flex flex-col">
-      <Navbar setPage={setPage} />
+      <Navbar />
       <div className="bg-white shadow-md p-2 flex items-center justify-between z-10">
-        <input
-          type="text"
-          value={scriptName}
-          onChange={(e) => setScriptName(e.target.value)}
-          className="font-bold text-lg border-transparent focus:ring-0 focus:border-transparent bg-transparent"
-        />
-          <div className="flex items-center gap-2">
-          <button onClick={handleSave} className="flex items-center gap-2 bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700">
-            <Save size={18} /> {saveStatus === 'saving' ? 'Saving…' : 'Save Script'}
+        <div className="flex items-center">
+          <label htmlFor="scriptName" className="text-sm font-medium text-gray-500 mr-2">Script Name:</label>
+          <input
+            id="scriptName"
+            type="text"
+            value={scriptName}
+            onChange={(e) => setScriptName(e.target.value)}
+            className="font-bold text-lg border-transparent focus:ring-0 focus:border-transparent bg-transparent"
+            aria-label="Script Name"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={handleSave} 
+            className={`flex items-center gap-2 text-white py-2 px-4 rounded-md transition-colors ${
+              saveStatus === 'saved' 
+                ? 'bg-green-600' 
+                : 'bg-indigo-600 hover:bg-indigo-700'
+            }`}
+            disabled={saveStatus === 'saving'}
+          >
+            {saveStatus === 'saved' ? (
+              <>
+                <CheckCircle2 size={18} /> Saved!
+              </>
+            ) : saveStatus === 'saving' ? (
+              <>
+                <Save size={18} /> Saving…
+              </>
+            ) : (
+              <>
+                <Save size={18} /> Save Script
+              </>
+            )}
           </button>
           <button onClick={() => setIsDifficultyModalOpen(true)} className="flex items-center gap-2 bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700">
             <Play size={18} /> Practice Script
@@ -205,6 +250,13 @@ const ScriptBuilder = ({ setPage, activeScript, setActiveScript }) => {
               className="absolute z-50 bg-white shadow-lg rounded-md overflow-hidden"
             >
               <button
+                onClick={() => updateNodeSpeaker(menu.id)}
+                className="flex items-center gap-2 w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+              >
+                <Users size={18} />
+                Change Speaker
+              </button>
+              <button
                 onClick={() => deleteNode(menu.id)}
                 className="flex items-center gap-2 w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
               >
@@ -225,11 +277,10 @@ const ScriptBuilder = ({ setPage, activeScript, setActiveScript }) => {
   );
 };
 
-// This wrapper provides the React Flow context to the main component.
-export default function ScriptBuilderPageWrapper({ setPage, activeScript, setActiveScript }) {
+export default function ScriptBuilderPageWrapper({ script, setScript }) {
   return (
     <ReactFlowProvider>
-      <ScriptBuilder setPage={setPage} activeScript={activeScript} setActiveScript={setActiveScript} />
+      <ScriptBuilder script={script} setScript={setScript} />
     </ReactFlowProvider>
   );
 }
