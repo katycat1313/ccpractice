@@ -47,39 +47,39 @@ export default function DashboardPage({ setScript }) {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50">
+    <div className="flex flex-col h-screen bg-[#f8f9fa]">
       <Navbar />
       <main className="flex-1 p-8">
         <div className="max-w-4xl mx-auto">
-          <h1 className="text-3xl font-bold text-gray-800 mb-4">Welcome back, {userName}!</h1>
-          <p className="text-gray-600 mb-8">What would you like to do today?</p>
+          <h1 className="text-4xl font-bold text-[#212529] mb-4">Welcome back, {userName}!</h1>
+          <p className="text-xl text-gray-600 mb-8">What would you like to do today?</p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
             <button
               onClick={handleNewScript}
-              className="flex flex-col items-center justify-center p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
+              className="flex flex-col items-center justify-center p-8 bg-white rounded-lg shadow-lg hover:shadow-xl transition-shadow"
             >
-              <Plus className="w-12 h-12 text-indigo-600 mb-4" />
-              <h2 className="text-xl font-semibold text-gray-800">Start from Scratch</h2>
-              <p className="text-gray-600">Create a new script using the script builder.</p>
+              <Plus className="w-16 h-16 text-[#003366] mb-4" />
+              <h2 className="text-2xl font-semibold text-[#212529]">Start from Scratch</h2>
+              <p className="text-gray-600 mt-2">Create a new script using the script builder.</p>
             </button>
             <button
               onClick={() => setIsGenerateModalOpen(true)}
-              className="flex flex-col items-center justify-center p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
+              className="flex flex-col items-center justify-center p-8 bg-white rounded-lg shadow-lg hover:shadow-xl transition-shadow"
             >
-              <Zap className="w-12 h-12 text-green-600 mb-4" />
-              <h2 className="text-xl font-semibold text-gray-800">Generate with AI</h2>
-              <p className="text-gray-600">Let our AI help you create a script.</p>
+              <Zap className="w-16 h-16 text-[#00a8e8] mb-4" />
+              <h2 className="text-2xl font-semibold text-[#212529]">Generate with AI</h2>
+              <p className="text-gray-600 mt-2">Let our AI help you create a script.</p>
             </button>
           </div>
 
           {latestScript && (
-            <div className="bg-white p-6 rounded-lg shadow-md">
-              <h3 className="text-xl font-semibold text-gray-800 mb-4">Your Latest Script</h3>
-              <p className="text-gray-600 mb-4">{latestScript.name}</p>
+            <div className="bg-white p-8 rounded-lg shadow-lg">
+              <h3 className="text-2xl font-semibold text-[#212529] mb-4">Your Latest Script</h3>
+              <p className="text-lg text-gray-600 mb-4">{latestScript.name}</p>
               <button
                 onClick={handlePractice}
-                className="w-full bg-indigo-600 text-white py-3 rounded-md hover:bg-indigo-700 transition-colors"
+                className="w-full bg-[#003366] text-white py-4 rounded-md hover:bg-[#0055a4] transition-colors text-lg font-semibold"
               >
                 Practice Now
               </button>

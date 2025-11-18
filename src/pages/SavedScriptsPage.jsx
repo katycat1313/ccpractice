@@ -51,48 +51,48 @@ export default function SavedScriptsPage({ setScript }) {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50">
+    <div className="flex flex-col h-screen bg-[#f8f9fa]">
       <Navbar />
       <main className="flex-1 p-8">
         <div className="max-w-4xl mx-auto">
           <div className="flex justify-between items-center mb-8">
-            <h1 className="text-3xl font-bold text-gray-800">Saved Scripts</h1>
-            <button onClick={() => { setScript(null); navigate('/script-builder'); }} className="bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700">
+            <h1 className="text-4xl font-bold text-[#212529]">Saved Scripts</h1>
+            <button onClick={() => { setScript(null); navigate('/script-builder'); }} className="bg-[#003366] text-white py-2 px-6 rounded-md hover:bg-[#0055a4] text-lg font-semibold transition-colors">
               New Script
             </button>
           </div>
           {loading ? (
             <div className="flex justify-center items-center p-16">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#003366]"></div>
             </div>
           ) : scripts.length === 0 ? (
-            <div className="text-center p-16 bg-white rounded-lg shadow">
-              <h2 className="text-xl font-semibold text-gray-800 mb-2">No Scripts Yet</h2>
-              <p className="text-gray-600 mb-4">It looks like you haven't saved any scripts. Get started by creating one!</p>
-              <button onClick={() => { setScript(null); navigate('/script-builder'); }} className="bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700">
+            <div className="text-center p-16 bg-white rounded-lg shadow-lg">
+              <h2 className="text-2xl font-semibold text-[#212529] mb-2">No Scripts Yet</h2>
+              <p className="text-lg text-gray-600 mb-4">It looks like you haven't saved any scripts. Get started by creating one!</p>
+              <button onClick={() => { setScript(null); navigate('/script-builder'); }} className="bg-[#003366] text-white py-3 px-6 rounded-md hover:bg-[#0055a4] text-lg font-semibold transition-colors">
                 Create New Script
               </button>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-6">
               {scripts.map((s) => (
-                <div key={s.id} className="p-6 bg-white rounded-lg shadow-md flex justify-between items-center">
+                <div key={s.id} className="p-6 bg-white rounded-lg shadow-lg flex justify-between items-center">
                   <div className="flex-grow">
-                    <div className="font-semibold text-lg text-gray-800">{s.name || 'Untitled'}</div>
-                    <div className="text-sm text-gray-500 mt-1">
+                    <div className="font-semibold text-xl text-[#212529]">{s.name || 'Untitled'}</div>
+                    <div className="text-md text-gray-500 mt-1">
                       {s.metadata?.difficulty && <span>{s.metadata.difficulty}</span>}
                       {s.metadata?.difficulty && s.updated_at && <span className="mx-2">·</span>}
                       {s.updated_at && <span>Last updated {new Date(s.updated_at).toLocaleDateString()}</span>}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => handlePractice(s)} className="p-2 text-gray-600 hover:bg-gray-100 rounded-full" aria-label="Practice Script">
+                    <button onClick={() => handlePractice(s)} className="p-3 text-white bg-[#00a8e8] hover:bg-[#009DD8] rounded-full transition-colors" aria-label="Practice Script">
                       <Play size={20} />
                     </button>
-                    <button onClick={() => handleLoad(s)} className="p-2 text-gray-600 hover:bg-gray-100 rounded-full" aria-label="Edit Script">
+                    <button onClick={() => handleLoad(s)} className="p-3 text-gray-600 hover:bg-gray-100 rounded-full transition-colors" aria-label="Edit Script">
                       <Edit size={20} />
                     </button>
-                    <button onClick={() => handleDelete(s.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-full" aria-label="Delete Script">
+                    <button onClick={() => handleDelete(s.id)} className="p-3 text-red-600 hover:bg-red-50 rounded-full transition-colors" aria-label="Delete Script">
                       <Trash2 size={20} />
                     </button>
                   </div>

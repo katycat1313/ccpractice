@@ -49,77 +49,90 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center">
-        <p>Loading...</p>
+      <div className="flex flex-col h-screen bg-[#f8f9fa]">
+        <Navbar />
+        <div className="flex-1 flex justify-center items-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#003366]"></div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col font-open-dyslexic">
+    <div className="flex flex-col min-h-screen bg-[#f8f9fa]">
       <Navbar />
-      <div className="max-w-4xl mx-auto p-8 w-full">
-        <h1 className="text-4xl font-bold mb-8 text-gray-900">Settings</h1>
+      <main className="flex-1 p-8">
+        <div className="max-w-4xl mx-auto">
+          <h1 className="text-4xl font-bold text-[#212529] mb-8">Settings</h1>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        {success && <p className="text-sm text-green-600">{success}</p>}
-
-        <div className="bg-white rounded-lg shadow-md p-8 mb-8">
-          <h2 className="text-2xl font-semibold mb-6 flex items-center text-gray-800">
-            <User className="mr-3" /> Profile Information
-          </h2>
-          <div className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Your Name</label>
-              <input
-                type="text"
-                name="name"
-                value={profile.name}
-                onChange={handleProfileChange}
-                className="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
+          {error && (
+            <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded">
+              <p className="text-lg text-red-700 font-semibold">{error}</p>
             </div>
+          )}
+          {success && (
+            <div className="mb-6 p-4 bg-green-50 border-l-4 border-green-500 rounded">
+              <p className="text-lg text-green-700 font-semibold">{success}</p>
+            </div>
+          )}
+
+          <div className="bg-white rounded-lg shadow-lg p-8 mb-8">
+            <h2 className="text-2xl font-semibold mb-6 flex items-center text-[#212529]">
+              <User className="mr-3 text-[#003366]" /> Profile Information
+            </h2>
+            <div className="space-y-6">
+              <div>
+                <label className="block text-lg font-semibold text-gray-700 mb-2">Your Name</label>
+                <input
+                  type="text"
+                  name="name"
+                  value={profile.name}
+                  onChange={handleProfileChange}
+                  className="appearance-none block w-full px-4 py-3 text-lg border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-[#00a8e8] focus:border-[#00a8e8]"
+                />
+              </div>
+              <div>
+                <label className="block text-lg font-semibold text-gray-700 mb-2">Your Role</label>
+                <input
+                  type="text"
+                  name="role"
+                  value={profile.role}
+                  onChange={handleProfileChange}
+                  className="appearance-none block w-full px-4 py-3 text-lg border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-[#00a8e8] focus:border-[#00a8e8]"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-lg p-8">
+            <h2 className="text-2xl font-semibold mb-6 flex items-center text-[#212529]">
+              <Key className="mr-3 text-[#003366]" /> API Configuration
+            </h2>
+            <p className="text-lg text-gray-600 mb-4">
+              Your API key is stored securely and is only used to connect to your AI provider.
+            </p>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Your Role</label>
+              <label className="block text-lg font-semibold text-gray-700 mb-2">Vertex AI API Key</label>
               <input
-                type="text"
-                name="role"
-                value={profile.role}
-                onChange={handleProfileChange}
-                className="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                type="password"
+                value={apiKey}
+                onChange={handleApiChange}
+                className="appearance-none block w-full px-4 py-3 text-lg border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-[#00a8e8] focus:border-[#00a8e8]"
+                placeholder="Enter your secret API key"
               />
             </div>
           </div>
-        </div>
 
-        <div className="bg-white rounded-lg shadow-md p-8">
-          <h2 className="text-2xl font-semibold mb-6 flex items-center text-gray-800">
-            <Key className="mr-3" /> API Configuration
-          </h2>
-          <p className="text-gray-600 mb-4">
-            Your API key is stored securely and is only used to connect to your AI provider.
-          </p>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Vertex AI API Key</label>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={handleApiChange}
-              className="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="Enter your secret API key"
-            />
+          <div className="mt-8 flex justify-end">
+            <button
+              onClick={handleSave}
+              className="bg-[#003366] text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:bg-[#0055a4] transition duration-300 flex items-center gap-2 text-lg"
+            >
+              <Save size={20} /> Save All Settings
+            </button>
           </div>
         </div>
-
-        <div className="mt-8 flex justify-end">
-          <button
-            onClick={handleSave}
-            className="bg-indigo-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:bg-indigo-700 transition duration-300 flex items-center gap-2"
-          >
-            <Save size={20} /> Save All Settings
-          </button>
-        </div>
-      </div>
+      </main>
     </div>
   );
 }
