@@ -9,6 +9,7 @@ export default function SettingsPage() {
     role: '',
   });
   const [apiKey, setApiKey] = useState('');
+  const [savedApiKey, setSavedApiKey] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
@@ -21,6 +22,9 @@ export default function SettingsPage() {
           name: user.user_metadata.name || '',
           role: user.user_metadata.role || '',
         });
+        if (user.user_metadata.gemini_api_key) {
+          setSavedApiKey(user.user_metadata.gemini_api_key);
+        }
       }
       setLoading(false);
     }
@@ -39,11 +43,22 @@ export default function SettingsPage() {
   const handleSave = async () => {
     setError(null);
     setSuccess(null);
-    const { error } = await updateUser({ data: profile });
+
+    const updateData = { ...profile };
+    if (apiKey) {
+      updateData.gemini_api_key = apiKey;
+    }
+
+    const { error } = await updateUser({ data: updateData });
+    
     if (error) {
       setError(error.message);
     } else {
-      setSuccess('Profile updated successfully!');
+      setSuccess('Settings updated successfully!');
+      if (apiKey) {
+        setSavedApiKey(apiKey);
+        setApiKey('');
+      }
     }
   };
 
@@ -112,13 +127,13 @@ export default function SettingsPage() {
               Your API key is stored securely and is only used to connect to your AI provider.
             </p>
             <div>
-              <label className="block text-lg font-semibold text-gray-700 mb-2">Vertex AI API Key</label>
+              <label className="block text-lg font-semibold text-gray-700 mb-2">Gemini AI API Key</label>
               <input
                 type="password"
                 value={apiKey}
                 onChange={handleApiChange}
                 className="appearance-none block w-full px-4 py-3 text-lg border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-[#00a8e8] focus:border-[#00a8e8]"
-                placeholder="Enter your secret API key"
+                placeholder={savedApiKey ? `••••••••••••${savedApiKey.slice(-4)}` : "Enter your secret API key"}
               />
             </div>
           </div>
