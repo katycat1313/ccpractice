@@ -12,7 +12,7 @@ import 'reactflow/dist/style.css';
 
 import Navbar from '../components/Navbar';
 import ScriptNode from '../components/Node';
-import DifficultyModal from '../components/DifficultyModal';
+import PracticeOptionsModal from './PracticeOptionsModal';
 import { Save, Play, Trash2, CheckCircle2, User, Users } from 'lucide-react';
 import { supabase } from '../../supabaseClient.js';
 import { getUser } from '../lib/supabaseAuth';
@@ -29,8 +29,8 @@ const ScriptBuilder = ({ script, setScript }) => {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [scriptName, setScriptName] = useState('New Script');
-  const [menu, setMenu] = useState(null);
-  const [isDifficultyModalOpen, setIsDifficultyModalOpen] = useState(false);
+  const [menu, setMenu] = useState(null); // Right-click context menu
+  const [isPracticeModalOpen, setIsPracticeModalOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null);
   const navigate = useNavigate();
 
@@ -179,9 +179,14 @@ const ScriptBuilder = ({ script, setScript }) => {
     setTimeout(() => setSaveStatus(null), 2000);
   };
 
-  const handleStartPractice = (difficulty) => {
-    setScript({ nodes, edges, difficulty });
-    setIsDifficultyModalOpen(false);
+  const handleStartPractice = (options) => {
+    setScript({ 
+      ...script, 
+      nodes, 
+      edges, 
+      metadata: { ...script?.metadata, difficulty: options.difficulty, voice: options.voice } 
+    });
+    setIsPracticeModalOpen(false);
     navigate('/practice');
   };
 
@@ -224,7 +229,7 @@ const ScriptBuilder = ({ script, setScript }) => {
               </>
             )}
           </button>
-          <button onClick={() => setIsDifficultyModalOpen(true)} className="flex items-center gap-2 bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700">
+          <button onClick={() => setIsPracticeModalOpen(true)} className="flex items-center gap-2 bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700">
             <Play size={18} /> Practice Script
           </button>
         </div>
@@ -267,10 +272,10 @@ const ScriptBuilder = ({ script, setScript }) => {
           )}
         </ReactFlow>
       </div>
-      {isDifficultyModalOpen && (
-        <DifficultyModal
+      {isPracticeModalOpen && (
+        <PracticeOptionsModal
           onStart={handleStartPractice}
-          onClose={() => setIsDifficultyModalOpen(false)}
+          onClose={() => setIsPracticeModalOpen(false)}
         />
       )}
     </div>

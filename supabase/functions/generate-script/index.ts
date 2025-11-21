@@ -1,5 +1,7 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.81.1';
 import { corsHeaders } from '../_shared/cors.ts';
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', {
@@ -7,6 +9,17 @@ serve(async (req) => {
     });
   }
   try {
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+    );
+
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     const { yourName, yourBusiness, niche, painPoint, cta } = await req.json();
     if (!painPoint || !cta) {
       return new Response(JSON.stringify({

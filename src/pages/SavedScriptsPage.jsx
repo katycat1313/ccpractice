@@ -3,10 +3,13 @@ import { supabase } from '../../supabaseClient.js';
 import { getUser } from '../lib/supabaseAuth';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
+import PracticeOptionsModal from './PracticeOptionsModal';
+import PracticePage from './PracticePage';
 import { Edit, Trash2, Play } from 'lucide-react';
 
 export default function SavedScriptsPage({ setScript }) {
   const [scripts, setScripts] = useState([]);
+  const [practiceState, setPracticeState] = useState({ optionsOpen: false, practiceOpen: false, scriptToPractice: null });
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -39,10 +42,16 @@ export default function SavedScriptsPage({ setScript }) {
   };
 
   const handlePractice = (script) => {
-    if (setScript) {
-      setScript(script);
-      navigate('/practice');
-    }
+    setPracticeState({ optionsOpen: true, practiceOpen: false, scriptToPractice: script });
+  };
+
+  const handleStartPractice = (options) => {
+    const scriptWithOptions = { 
+      ...practiceState.scriptToPractice, 
+      metadata: { ...practiceState.scriptToPractice.metadata, ...options } 
+    };
+    setScript(scriptWithOptions);
+    setPracticeState({ optionsOpen: false, practiceOpen: true, scriptToPractice: scriptWithOptions });
   };
 
   const handleDelete = async (id) => {
@@ -102,6 +111,19 @@ export default function SavedScriptsPage({ setScript }) {
           )}
         </div>
       </main>
+      {practiceState.optionsOpen && (
+        <PracticeOptionsModal
+          onStart={handleStartPractice}
+          onClose={() => setPracticeState({ optionsOpen: false, practiceOpen: false, scriptToPractice: null })}
+        />
+      )}
+      {practiceState.practiceOpen && practiceState.scriptToPractice && (
+        <PracticePage
+          script={practiceState.scriptToPractice}
+          setScript={setScript}
+          onClose={() => setPracticeState({ optionsOpen: false, practiceOpen: false, scriptToPractice: null })}
+        />
+      )}
     </div>
   );
 }

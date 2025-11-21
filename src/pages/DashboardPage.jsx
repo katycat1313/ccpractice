@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import Navbar from '../components/Navbar';
 import GenerateScriptModal from '../components/GenerateScriptModal';
+import PracticePage from './PracticePage'; // Import PracticePage
+import PracticeOptionsModal from './PracticeOptionsModal'; // Import new modal
 import { Plus, Zap, AlertTriangle, Loader } from 'lucide-react';
 import { supabase } from '../../supabaseClient';
 import { useNavigate } from 'react-router-dom';
 
 export default function DashboardPage({ setScript }) {
   const [latestScript, setLatestScript] = useState(null);
+  const [isPracticeModalOpen, setIsPracticeModalOpen] = useState(false);
+  const [isPracticeOptionsOpen, setIsPracticeOptionsOpen] = useState(false);
   const [userName, setUserName] = useState('');
   const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -62,10 +66,16 @@ export default function DashboardPage({ setScript }) {
 
   const handlePractice = () => {
     if (latestScript) {
-      setScript(latestScript);
-      navigate('/practice');
+      setIsPracticeOptionsOpen(true);
     }
   };
+
+  const handleStartPractice = (options) => {
+    const scriptWithOptions = { ...latestScript, metadata: { ...latestScript.metadata, ...options } };
+    setScript(scriptWithOptions);
+    setIsPracticeOptionsOpen(false);
+    setIsPracticeModalOpen(true);
+  }
 
   const handleNewScript = () => {
     setScript(null);
@@ -75,7 +85,7 @@ export default function DashboardPage({ setScript }) {
   const handleGenerateSubmit = async (formData) => {
     setIsGenerating(true);
     setGenerateError(null);
-https://console.cloud.google.com/billing/01C2EE-8C7C5B-10B751/export?project=lead-connect-ai    try {
+    try {
       const { data, error } = await supabase.functions.invoke('generate-script', {
         body: formData,
       });
@@ -181,6 +191,18 @@ https://console.cloud.google.com/billing/01C2EE-8C7C5B-10B751/export?project=lea
           onSubmit={handleGenerateSubmit}
           isGenerating={isGenerating}
           error={generateError}
+        />
+      )}
+      {isPracticeModalOpen && latestScript && (
+        <PracticePage
+          script={latestScript}
+          onClose={() => setIsPracticeModalOpen(false)}
+        />
+      )}
+      {isPracticeOptionsOpen && (
+        <PracticeOptionsModal 
+          onStart={handleStartPractice}
+          onClose={() => setIsPracticeOptionsOpen(false)}
         />
       )}
     </div>
