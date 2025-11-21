@@ -18,6 +18,7 @@ const PrompterLine = ({ node, isCurrent, isEditing, onTextChange, onClick, isCho
     <div
       ref={ref}
       onClick={onClick}
+      data-node-id={node.id}
       className={`w-full max-w-4xl rounded-lg p-6 text-center transition-all duration-300 ${bgColor} ${cursor}`}
     >
       <p className={`text-lg font-bold mb-2 ${speakerColor}`}>
