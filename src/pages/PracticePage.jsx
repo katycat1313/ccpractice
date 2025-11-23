@@ -1,14 +1,29 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Play, Pause, Edit, Check, RotateCcw, Mic, StopCircle, X, ZoomIn, ZoomOut, Maximize2, AlertCircle } from 'lucide-react';
+import AnimatedScriptView from '../components/AnimatedScriptView';
 import PrompterLine from '../components/PrompterLine';
 import { supabase } from '../../supabaseClient';
 import { useNavigate } from 'react-router-dom';
 import { useAudioAnalyzer } from '../hooks/useAudioAnalyzer';
 import { useStreamingTranscription } from '../hooks/useStreamingTranscription';
 import { useAIResponseOrchestrator } from '../hooks/useAIResponseOrchestrator';
-import { useNodeAnimation } from '../hooks/useNodeAnimation';
+import { useTextToSpeech } from '../hooks/useTextToSpeech';
+import { getProspectVoiceConfig, getProspect } from '../lib/prospects';
+import { debugLog, debugError, debugWarn, debugTrace, debugSuccess, PerformanceTracker } from '../lib/debugUtils';
 
-export default function PracticePage({ script, setScript, setFeedback, setTranscript, onClose }) {
+export default function PracticePage({ script, setScript, setFeedback, setTranscript, onClose, prospect, difficulty: passedDifficulty }) {
+  // ============= PROSPECT DATA =============
+  const prospectData = prospect || getProspect('sarah'); // default to Sarah if not provided
+
+  // Validate script on mount
+  useEffect(() => {
+    if (!script || !script.nodes || !Array.isArray(script.nodes)) {
+      debugError('PracticePage', 'Invalid script structure', null, { script });
+    } else {
+      debugSuccess('PracticePage', 'Script loaded', { nodeCount: script.nodes.length });
+    }
+  }, [script]);
+
   // ============= STATE MANAGEMENT =============
   const [isRecording, setIsRecording] = useState(false);
   const [isFrozen, setIsFrozen] = useState(false);
@@ -18,6 +33,7 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
   const [error, setError] = useState(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [sensitivity, setSensitivity] = useState(50);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
   // ============= HOOKS =============
   const analyzer = useAudioAnalyzer(
@@ -26,7 +42,7 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
   );
   const transcription = useStreamingTranscription();
   const orchestrator = useAIResponseOrchestrator();
-  const animation = useNodeAnimation();
+  const tts = useTextToSpeech();
 
   const navigate = useNavigate();
   const recordingStreamRef = useRef(null);
@@ -34,7 +50,7 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
   const recordingTimerRef = useRef(null);
 
   const { nodes, edges, metadata } = script || { nodes: [], edges: [], metadata: {} };
-  const difficulty = metadata?.difficulty || 'Medium';
+  const difficulty = passedDifficulty || metadata?.difficulty || 'Medium';
   // ============= INITIALIZATION =============
   const handleRestart = useCallback(() => {
     if (nodes.length > 0) {
@@ -44,11 +60,10 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
       setIsFrozen(false);
       setIsEditing(false);
       setError(null);
-      animation.reset();
       orchestrator.reset();
       transcription.reset();
     }
-  }, [nodes, edges, animation, orchestrator, transcription]);
+  }, [nodes, edges, orchestrator, transcription]);
 
   useEffect(() => {
     handleRestart();
@@ -71,8 +86,6 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
     if (nextPossibleNodes.some(n => n.id === nodeId)) {
       const newPath = [...path, nodeId];
       setPath(newPath);
-      animation.queueNodeAnimation(nodeId);
-      animation.processNodeQueue();
     }
   };
 
@@ -99,21 +112,32 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
   }, [path, nodes]);
 
   const handleStartRecording = async () => {
+    const perf = new PerformanceTracker('handleStartRecording');
     try {
       setError(null);
+      debugTrace('PracticePage', 'recording_start_attempt');
 
       // Get microphone stream
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!stream) {
+        throw new Error('Failed to get microphone stream');
+      }
       recordingStreamRef.current = stream;
+      debugSuccess('PracticePage', 'Microphone stream acquired');
 
       // Start all subsystems
       const analyzerStarted = await analyzer.startAnalysis(stream);
       if (!analyzerStarted) {
-        setError('Failed to start audio analyzer');
+        const err = 'Failed to start audio analyzer';
+        debugError('PracticePage', err);
+        setError(err);
         return;
       }
+      debugSuccess('PracticePage', 'Audio analyzer started');
 
       await transcription.startStreaming(stream);
+      debugSuccess('PracticePage', 'Transcription streaming started');
+
       analyzer.setSensitivity(sensitivity);
 
       // Start orchestration loop
@@ -122,9 +146,11 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
         buildConversationHistory(),
         difficulty,
         () => {
+          debugTrace('PracticePage', 'ai_response_ready');
           console.log('[PracticePage] Response ready!');
         }
       );
+      debugSuccess('PracticePage', 'Orchestration started');
 
       setIsRecording(true);
       recordingStartTimeRef.current = Date.now();
@@ -135,37 +161,53 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
         setRecordingDuration(elapsed);
       }, 100);
 
-      console.log('[PracticePage] Recording started');
+      debugSuccess('PracticePage', 'Recording started successfully');
+      perf.end();
     } catch (err) {
-      console.error('[PracticePage] Error starting recording:', err);
-      setError(err.message);
+      debugError('PracticePage', 'Error starting recording', err);
+      setError(`Failed to start recording: ${err.message}`);
+      perf.end();
     }
   };
 
   const handleStopRecording = async () => {
+    const perf = new PerformanceTracker('handleStopRecording');
     try {
+      debugTrace('PracticePage', 'recording_stop_attempt');
       setIsRecording(false);
       setIsFrozen(true);
 
       // Stop all subsystems
       analyzer.stopAnalysis();
+      debugSuccess('PracticePage', 'Audio analyzer stopped');
+
       orchestrator.stopOrchestration();
+      debugSuccess('PracticePage', 'Orchestration stopped');
 
       const finalTranscript = await transcription.stopStreaming();
+      if (!finalTranscript) {
+        debugWarn('PracticePage', 'Empty transcript returned');
+      }
       setTranscript(finalTranscript);
+      debugSuccess('PracticePage', 'Transcription stopped', { transcriptLength: finalTranscript?.length || 0 });
 
       if (recordingTimerRef.current) {
         clearInterval(recordingTimerRef.current);
       }
 
       if (recordingStreamRef.current) {
-        recordingStreamRef.current.getTracks().forEach(track => track.stop());
+        recordingStreamRef.current.getTracks().forEach(track => {
+          track.stop();
+          debugTrace('PracticePage', 'microphone_track_stopped');
+        });
       }
 
-      console.log('[PracticePage] Recording stopped. Transcript:', finalTranscript);
+      debugSuccess('PracticePage', 'Recording stopped successfully');
 
       // Generate feedback
       const scriptText = nodes.map(node => node.data.text).join(' ');
+      debugTrace('PracticePage', 'feedback_generation_start', { scriptLength: scriptText.length });
+
       const { data: feedbackData, error: feedbackError } = await supabase.functions.invoke(
         'generate-feedback',
         {
@@ -177,13 +219,17 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
       );
 
       if (feedbackError) {
-        console.error('Feedback error:', feedbackError);
+        debugError('PracticePage', 'Feedback generation error', feedbackError);
       } else {
         setFeedback(feedbackData);
+        debugSuccess('PracticePage', 'Feedback generated successfully');
       }
+
+      perf.end();
     } catch (err) {
-      console.error('[PracticePage] Error stopping recording:', err);
-      setError(err.message);
+      debugError('PracticePage', 'Error stopping recording', err);
+      setError(`Failed to stop recording: ${err.message}`);
+      perf.end();
     }
   };
 
@@ -211,15 +257,17 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
         const updatedNodes = [...nodes, newNode];
         setScript({ ...script, nodes: updatedNodes });
 
-        // Advance path and animate
+        // Advance path
         const newPath = [...path, newNodeId];
         setPath(newPath);
 
-        animation.queueNodeAnimation(newNodeId);
-        animation.processNodeQueue();
+        // Play audio for the response
+        console.log('[PracticePage] Playing TTS for response:', response.text.substring(0, 50));
+        const voiceConfig = prospect ? getProspectVoiceConfig(prospect.id) : getProspectVoiceConfig('sarah');
+        tts.synthesizeAndPlay(response.text, voiceConfig);
       }
     }
-  }, [orchestrator.queuedResponse, isRecording, isFrozen, path, nodes, script, animation]);
+  }, [orchestrator.queuedResponse, isRecording, isFrozen, path, nodes, script, animation, tts]);
 
   // ============= UI CALCULATIONS =============
   const progress = path.length > 0 && nodes.length > 0 ? (path.length / nodes.length) * 100 : 0;
@@ -255,6 +303,7 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
           </div>
           <div className="text-center">
             <h2 className="text-2xl font-bold text-white">Practice Session</h2>
+            <p className="text-sm text-blue-400 mt-1">With: {prospectData.name}</p>
             {isRecording && (
               <p className="text-sm text-red-400 mt-1">
                 Recording: {recordingDuration}s
@@ -285,21 +334,38 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
 
         {/* ============= CONTROLS =============  */}
         {isRecording && (
-          <div className="bg-gray-800 px-4 py-3 border-b border-gray-700 flex items-center gap-4">
-            <label className="text-sm text-gray-400">Sensitivity:</label>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="5"
-              value={sensitivity}
-              onChange={(e) => {
-                setSensitivity(parseInt(e.target.value));
-                analyzer.setSensitivity(parseInt(e.target.value));
-              }}
-              className="w-48"
-            />
-            <span className="text-xs text-gray-400">{sensitivity}%</span>
+          <div className="bg-gray-800 px-4 py-3 border-b border-gray-700 flex items-center gap-6 flex-wrap">
+            <div className="flex items-center gap-3">
+              <label className="text-sm text-gray-400 whitespace-nowrap">Sensitivity:</label>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="5"
+                value={sensitivity}
+                onChange={(e) => {
+                  setSensitivity(parseInt(e.target.value));
+                  analyzer.setSensitivity(parseInt(e.target.value));
+                }}
+                className="w-40"
+              />
+              <span className="text-xs text-gray-400 w-10">{sensitivity}%</span>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <label className="text-sm text-gray-400 whitespace-nowrap">Playback Speed:</label>
+              <select
+                value={playbackSpeed}
+                onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
+                className="bg-gray-700 border border-gray-600 text-white rounded px-3 py-1 text-sm"
+              >
+                <option value={0.75}>0.75x (Slower)</option>
+                <option value={1}>1x (Normal)</option>
+                <option value={1.25}>1.25x (Faster)</option>
+                <option value={1.5}>1.5x (Much Faster)</option>
+              </select>
+            </div>
+
             <div className="ml-auto text-xs text-gray-400">
               {transcription.isConnected && (
                 <span className="text-green-400">● Streaming</span>
@@ -323,69 +389,20 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
         )}
 
         {/* ============= CONVERSATION AREA ============= */}
-        <div
-          ref={animation.containerRef}
-          className="relative flex-grow flex flex-col items-center pt-8 pb-32 overflow-y-auto"
-          style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center' }}
-        >
-          <div className="absolute top-0 left-0 right-0 h-24 bg-gradient-to-b from-gray-900 to-transparent z-10 pointer-events-none" />
-
-          <div className="w-full flex flex-col items-center gap-8 px-4">
-            {path.map((nodeId, idx) => {
-              const node = nodes.find(n => n.id === nodeId);
-              if (!node) return null;
-
-              return (
-                <div
-                  key={node.id}
-                  data-node-id={node.id}
-                  className={`transition-all duration-300 ${idx < path.length - 1 ? 'opacity-60' : ''}`}
-                >
-                  <PrompterLine
-                    node={node}
-                    isCurrent={node.id === currentNodeId}
-                    isEditing={isEditing && node.id === currentNodeId}
-                    onTextChange={(e) => handleTextChange(e, node.id)}
-                    onClick={() => handleNodeClick(node.id)}
-                    isChoice={idx < path.length - 1}
-                  />
-                </div>
-              );
-            })}
-
-            {nextPossibleNodes.length > 0 && !isFrozen && !isRecording && (
-              <div className="mt-4 w-full max-w-4xl border-t-2 border-gray-700 pt-8 flex flex-col items-center gap-4">
-                <p className="text-gray-400 mb-4">Next Options:</p>
-                {nextPossibleNodes.map(nextNode => (
-                  <PrompterLine
-                    key={nextNode.id}
-                    node={nextNode}
-                    isCurrent={false}
-                    isEditing={false}
-                    onTextChange={() => {}}
-                    onClick={() => handleNodeClick(nextNode.id)}
-                    isChoice={true}
-                  />
-                ))}
-              </div>
-            )}
-
-            {nextPossibleNodes.length === 0 && !isRecording && (
-              <div className="mt-8">
-                <button
-                  onClick={() => {
-                    onClose();
-                    navigate('/feedback');
-                  }}
-                  className="bg-green-600 text-white font-semibold py-3 px-6 rounded-lg hover:bg-green-700"
-                >
-                  End of Script - View Feedback
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-gray-900 to-transparent z-10 pointer-events-none" />
+        <div className="relative flex-grow flex flex-col items-center overflow-hidden">
+          <AnimatedScriptView
+            nodes={nodes}
+            path={path}
+            nextPossibleNodes={nextPossibleNodes}
+            currentNodeId={currentNodeId}
+            isRecording={isRecording}
+            isFrozen={isFrozen}
+            isEditing={isEditing}
+            playbackSpeed={playbackSpeed}
+            zoom={zoom}
+            onNodeClick={handleNodeClick}
+            onTextChange={handleTextChange}
+          />
         </div>
 
         {/* ============= FOOTER CONTROLS ============= */}
@@ -412,6 +429,22 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
             >
               {isEditing ? <><Check size={20} /> Save</> : <><Edit size={20} /> Edit</>}
             </button>
+
+            {!isRecording && (
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-400">Speed:</label>
+                <select
+                  value={playbackSpeed}
+                  onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
+                  className="bg-gray-700 border border-gray-600 text-white rounded px-2 py-1 text-xs"
+                >
+                  <option value={0.75}>0.75x</option>
+                  <option value={1}>1x</option>
+                  <option value={1.25}>1.25x</option>
+                  <option value={1.5}>1.5x</option>
+                </select>
+              </div>
+            )}
 
             <button
               onClick={isRecording ? handleStopRecording : handleStartRecording}

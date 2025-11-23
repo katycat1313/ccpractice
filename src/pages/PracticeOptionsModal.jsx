@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
+import { PROSPECT_LIST } from '../lib/prospects';
+import { debugLog, debugError, debugWarn, debugTrace } from '../lib/debugUtils';
 
 export default function PracticeOptionsModal({ onClose, onStart }) {
   const [selectedDifficulty, setSelectedDifficulty] = useState(null);
-  const [selectedVoice, setSelectedVoice] = useState(null);
+  const [selectedProspect, setSelectedProspect] = useState(null);
   const [error, setError] = useState('');
 
   const config = {
-    popup_title: "Choose Practice Level",
+    popup_title: "Choose Practice Settings",
     difficulty_label: "Difficulty Level*",
-    voice_label: "Voice Option*",
+    prospect_label: "Select Your Prospect*",
     cancel_text: "Cancel",
     start_text: "Start Practice",
   };
@@ -16,26 +18,56 @@ export default function PracticeOptionsModal({ onClose, onStart }) {
   const handleSubmit = (e) => {
     e.preventDefault();
     
-    if (!selectedDifficulty || !selectedVoice) {
-      setError('Please select both difficulty level and voice option.');
+    debugTrace('PracticeOptionsModal', 'submit_attempted', {
+      selectedDifficulty,
+      selectedProspect,
+    });
+
+    if (!selectedDifficulty || !selectedProspect) {
+      const err = 'Please select both difficulty level and a prospect.';
+      debugWarn('PracticeOptionsModal', 'Incomplete selection', {
+        hasDifficulty: !!selectedDifficulty,
+        hasProspect: !!selectedProspect,
+      });
+      setError(err);
       setTimeout(() => setError(''), 3000);
       return;
     }
 
-    const practiceSettings = {
-      difficulty: selectedDifficulty,
-      voice: selectedVoice
-    };
+    try {
+      const selectedProspectData = PROSPECT_LIST.find(p => p.id === selectedProspect);
+      if (!selectedProspectData) {
+        throw new Error(`Prospect not found: ${selectedProspect}`);
+      }
 
-    console.log('Starting practice with:', practiceSettings);
-    if (onStart) onStart(practiceSettings);
+      const practiceSettings = {
+        difficulty: selectedDifficulty,
+        prospect: selectedProspectData
+      };
+
+      debugTrace('PracticeOptionsModal', 'settings_created', practiceSettings);
+      if (onStart) {
+        onStart(practiceSettings);
+        debugLog('PracticeOptionsModal', 'Practice started successfully');
+      }
+    } catch (err) {
+      debugError('PracticeOptionsModal', 'Error submitting form', err);
+      setError(`Error: ${err.message}`);
+    }
   };
 
   const handleCancel = () => {
+    debugTrace('PracticeOptionsModal', 'cancelled', {
+      selectedDifficulty,
+      selectedProspect,
+    });
     setSelectedDifficulty(null);
-    setSelectedVoice(null);
+    setSelectedProspect(null);
     setError('');
-    if (onClose) onClose();
+    if (onClose) {
+      onClose();
+      debugLog('PracticeOptionsModal', 'Modal closed');
+    }
   };
 
   return (
@@ -54,37 +86,20 @@ export default function PracticeOptionsModal({ onClose, onStart }) {
       <div className="fixed inset-0 bg-black bg-opacity-20 z-20"></div>
 
       {/* Modal */}
-      <div className="relative z-50 rounded-2xl shadow-2xl w-full max-w-2xl p-8 overflow-hidden" style={{background: 'linear-gradient(135deg, #e0f2fe 0%, #ddd6fe 50%, #fce7f3 100%)'}}>
+      <div className="relative z-50 rounded-2xl shadow-2xl w-full max-w-4xl p-8 overflow-y-auto max-h-[90vh]" style={{background: 'linear-gradient(135deg, #e0f2fe 0%, #ddd6fe 50%, #fce7f3 100%)'}}>
         {/* Animated Background Shapes */}
         <div className="absolute inset-0 z-0 pointer-events-none">
           <div className="absolute top-10 right-16 w-40 h-40 bg-blue-400 rounded-full opacity-30 blur-xl"></div>
           <div className="absolute bottom-16 left-12 w-48 h-48 bg-purple-400 rounded-full opacity-25 blur-2xl"></div>
           <div className="absolute top-40 left-32 w-32 h-32 bg-pink-400 rounded-full opacity-20 blur-xl"></div>
           <div className="absolute bottom-32 right-24 w-36 h-36 bg-indigo-400 rounded-full opacity-30 blur-xl"></div>
-          
-          <svg className="absolute top-20 left-20 w-20 h-20 text-purple-500 opacity-40" viewBox="0 0 100 100">
-            <circle cx="50" cy="50" r="40" fill="none" stroke="currentColor" strokeWidth="3" />
-            <circle cx="50" cy="50" r="25" fill="none" stroke="currentColor" strokeWidth="3" />
-          </svg>
-          
-          <svg className="absolute bottom-24 right-40 w-16 h-16 text-pink-500 opacity-40" viewBox="0 0 100 100">
-            <rect x="10" y="10" width="80" height="80" fill="none" stroke="currentColor" strokeWidth="3" transform="rotate(45 50 50)" />
-          </svg>
-          
-          <svg className="absolute top-48 right-12 w-18 h-18 text-blue-500 opacity-40" viewBox="0 0 100 100">
-            <polygon points="50,10 90,90 10,90" fill="none" stroke="currentColor" strokeWidth="3" />
-          </svg>
-          
-          <svg className="absolute bottom-48 left-40 w-14 h-14 text-indigo-500 opacity-35" viewBox="0 0 100 100">
-            <rect x="20" y="20" width="60" height="60" fill="none" stroke="currentColor" strokeWidth="3" />
-          </svg>
         </div>
 
         {/* Content wrapper */}
         <div className="relative z-10">
           <h2 className="text-3xl font-bold mb-6 text-gray-800">{config.popup_title}</h2>
           
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form onSubmit={handleSubmit} className="space-y-8">
             {/* Difficulty Selection */}
             <div>
               <label className="block text-lg font-semibold text-gray-800 mb-3">{config.difficulty_label}</label>
@@ -94,34 +109,44 @@ export default function PracticeOptionsModal({ onClose, onStart }) {
                     key={idx}
                     type="button"
                     onClick={() => setSelectedDifficulty(level)}
-                    className={`option-card px-4 py-3 border-2 rounded-lg font-semibold transition ${
+                    className={`option-card px-4 py-3 border-2 rounded-lg font-semibold transition-all duration-200 transform hover:scale-105 active:scale-95 ${
                       selectedDifficulty === level
-                        ? 'border-purple-600 bg-purple-100 text-purple-900'
-                        : 'border-gray-300 text-gray-700 hover:border-purple-400'
+                        ? 'border-purple-600 bg-purple-100 text-purple-900 shadow-lg ring-2 ring-purple-400 ring-offset-2'
+                        : 'border-gray-300 text-gray-700 hover:border-purple-400 hover:shadow-md'
                     }`}
                   >
                     {level}
+                    {selectedDifficulty === level && (
+                      <span className="ml-2 text-lg">✓</span>
+                    )}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Voice Selection */}
+            {/* Prospect Selection */}
             <div>
-              <label className="block text-lg font-semibold text-gray-800 mb-3">{config.voice_label}</label>
-              <div className="grid grid-cols-4 gap-3">
-                {['A', 'B', 'C', 'D'].map((voice, idx) => (
+              <label className="block text-lg font-semibold text-gray-800 mb-4">{config.prospect_label}</label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {PROSPECT_LIST.map((prospect) => (
                   <button
-                    key={idx}
+                    key={prospect.id}
                     type="button"
-                    onClick={() => setSelectedVoice(voice)}
-                    className={`option-card px-4 py-3 border-2 rounded-lg font-semibold transition ${
-                      selectedVoice === voice
-                        ? 'border-purple-600 bg-purple-100 text-purple-900'
-                        : 'border-gray-300 text-gray-700 hover:border-purple-400'
+                    onClick={() => setSelectedProspect(prospect.id)}
+                    className={`prospect-card p-4 border-2 rounded-lg transition-all duration-200 transform hover:scale-105 active:scale-95 ${
+                      selectedProspect === prospect.id
+                        ? 'border-purple-600 bg-purple-50 shadow-lg ring-2 ring-purple-400 ring-offset-2'
+                        : 'border-gray-300 hover:border-purple-400 bg-white hover:shadow-md'
                     }`}
                   >
-                    Voice {voice}
+                    <div className={`inline-block ${prospect.color} text-white px-3 py-1 rounded-full text-xs font-semibold mb-2`}>
+                      {prospect.role}
+                    </div>
+                    <h3 className="text-lg font-bold text-gray-800 text-left">{prospect.name}</h3>
+                    <p className="text-sm text-gray-600 text-left mt-2">{prospect.description}</p>
+                    {selectedProspect === prospect.id && (
+                      <div className="text-right mt-3 text-purple-600 text-lg">✓</div>
+                    )}
                   </button>
                 ))}
               </div>

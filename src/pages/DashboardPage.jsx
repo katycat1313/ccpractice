@@ -196,6 +196,8 @@ export default function DashboardPage({ setScript }) {
       {isPracticeModalOpen && latestScript && (
         <PracticePage
           script={latestScript}
+          prospect={latestScript?.metadata?.prospect}
+          difficulty={latestScript?.metadata?.difficulty}
           onClose={() => setIsPracticeModalOpen(false)}
         />
       )}

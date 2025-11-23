@@ -184,7 +184,7 @@ const ScriptBuilder = ({ script, setScript }) => {
       ...script, 
       nodes, 
       edges, 
-      metadata: { ...script?.metadata, difficulty: options.difficulty, voice: options.voice } 
+      metadata: { ...script?.metadata, difficulty: options.difficulty, prospect: options.prospect } 
     });
     setIsPracticeModalOpen(false);
     navigate('/practice');
