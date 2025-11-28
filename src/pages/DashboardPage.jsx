@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
 import Navbar from '../components/Navbar';
 import GenerateScriptModal from '../components/GenerateScriptModal';
-import PracticePage from './PracticePage'; // Import PracticePage
-import PracticeOptionsModal from './PracticeOptionsModal'; // Import new modal
+import PracticePage from './PracticePage';
+import PracticeOptionsModal from './PracticeOptionsModal';
 import { Plus, Zap, AlertTriangle, Loader } from 'lucide-react';
 import { supabase } from '../../supabaseClient';
 import { useNavigate } from 'react-router-dom';
+import { ROUTES, API_ENDPOINTS } from '../config/constants';
 
 export default function DashboardPage({ setScript }) {
   const [latestScript, setLatestScript] = useState(null);
@@ -32,7 +34,7 @@ export default function DashboardPage({ setScript }) {
         }
 
         if (!user) {
-          navigate('/login');
+          navigate(ROUTES.LOGIN);
           return;
         }
 
@@ -79,14 +81,14 @@ export default function DashboardPage({ setScript }) {
 
   const handleNewScript = () => {
     setScript(null);
-    navigate('/script-builder');
+    navigate(ROUTES.SCRIPT_BUILDER);
   };
 
   const handleGenerateSubmit = async (formData) => {
     setIsGenerating(true);
     setGenerateError(null);
     try {
-      const { data, error } = await supabase.functions.invoke('generate-script', {
+      const { data, error } = await supabase.functions.invoke(API_ENDPOINTS.GENERATE_SCRIPT, {
         body: formData,
       });
 
@@ -96,7 +98,7 @@ export default function DashboardPage({ setScript }) {
 
       setScript(data);
       setIsGenerateModalOpen(false);
-      navigate('/script-builder');
+      navigate(ROUTES.SCRIPT_BUILDER);
     } catch (err) {
       console.error("Error invoking generate-script function:", err);
       let errorMessage = err.message || 'An unexpected error occurred during script generation.';
@@ -210,3 +212,7 @@ export default function DashboardPage({ setScript }) {
     </div>
   );
 }
+
+DashboardPage.propTypes = {
+  setScript: PropTypes.func.isRequired,
+};

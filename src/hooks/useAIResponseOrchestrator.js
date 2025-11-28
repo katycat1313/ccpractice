@@ -1,5 +1,7 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { supabase } from '../../supabaseClient';
+import { ORCHESTRATOR_CONFIG, API_ENDPOINTS } from '../config/constants';
+import { logger } from '../lib/logger';
 
 /**
  * useAIResponseOrchestrator
@@ -19,7 +21,7 @@ export const useAIResponseOrchestrator = () => {
 
   const orchestrationLoopRef = useRef(null);
   const lastGenerationTimeRef = useRef(0);
-  const generationDebounceRef = useRef(300); // ms - prevent duplicate requests
+  const generationDebounceRef = useRef(ORCHESTRATOR_CONFIG.GENERATION_DEBOUNCE_MS);
 
   /**
    * Generate prospect response using AI
@@ -31,7 +33,7 @@ export const useAIResponseOrchestrator = () => {
 
       // Debounce: don't generate if we just generated
       if (now - lastGenerationTimeRef.current < generationDebounceRef.current) {
-        console.log('[Orchestrator] Debouncing response generation');
+        logger.debug('Orchestrator', 'Debouncing response generation');
         return null;
       }
 
@@ -39,10 +41,10 @@ export const useAIResponseOrchestrator = () => {
       setIsGenerating(true);
 
       try {
-        console.log('[Orchestrator] Generating response... (difficulty:', difficulty, ')');
+        logger.info('Orchestrator', 'Generating response', { difficulty });
 
         const { data: responseData, error: responseError } = await supabase.functions.invoke(
-          'generate-prospect-response',
+          API_ENDPOINTS.GENERATE_PROSPECT_RESPONSE,
           {
             body: {
               conversationHistory,
@@ -52,7 +54,7 @@ export const useAIResponseOrchestrator = () => {
         );
 
         if (responseError) {
-          console.error('[Orchestrator] Generation error:', responseError);
+          logger.error('Orchestrator', 'Generation error', responseError);
           setError(responseError.message);
           return null;
         }
@@ -66,17 +68,17 @@ export const useAIResponseOrchestrator = () => {
             difficulty,
           };
 
-          console.log('[Orchestrator] Response generated:', response.text.substring(0, 60) + '...');
+          logger.success('Orchestrator', 'Response generated', { preview: response.text.substring(0, 60) });
           setQueuedResponse(response);
           setResponseHistory(prev => [...prev, response]);
 
           return response;
         } else {
-          console.error('[Orchestrator] No response text in data:', responseData);
+          logger.error('Orchestrator', 'No response text in data', responseData);
           return null;
         }
       } catch (error) {
-        console.error('[Orchestrator] Unexpected error:', error);
+        logger.error('Orchestrator', 'Unexpected error', error);
         setError(error.message);
         return null;
       } finally {
@@ -103,7 +105,7 @@ export const useAIResponseOrchestrator = () => {
    */
   const startOrchestration = useCallback(
     (audioAnalyzer, conversationHistory, difficulty, onResponseReady) => {
-      console.log('[Orchestrator] Starting orchestration loop');
+      logger.info('Orchestrator', 'Starting orchestration loop');
 
       const orchestrationLoop = setInterval(() => {
         if (!audioAnalyzer) return;
@@ -111,8 +113,12 @@ export const useAIResponseOrchestrator = () => {
         const patterns = audioAnalyzer.getSpeechPatterns();
 
         // Predict turn completion with 1-2 second lookahead
-        if (patterns.predictedTurnEnd && !isGenerating && !queuedResponse) {
-          console.log('[Orchestrator] Turn completion predicted! pauseLength:', patterns.currentPauseLength);
+        // Access state via refs to avoid stale closure
+        const now = Date.now();
+        const timeSinceLastGen = now - lastGenerationTimeRef.current;
+
+        if (patterns.predictedTurnEnd && timeSinceLastGen >= generationDebounceRef.current) {
+          logger.debug('Orchestrator', 'Turn completion predicted', { pauseLength: patterns.currentPauseLength });
 
           // Generate response while user is still paused
           generateProspectResponse(conversationHistory, difficulty);
@@ -121,12 +127,12 @@ export const useAIResponseOrchestrator = () => {
             onResponseReady();
           }
         }
-      }, 200); // Check every 200ms
+      }, ORCHESTRATOR_CONFIG.ORCHESTRATION_CHECK_INTERVAL_MS);
 
       orchestrationLoopRef.current = orchestrationLoop;
       return orchestrationLoop;
     },
-    [isGenerating, queuedResponse, generateProspectResponse]
+    [generateProspectResponse]
   );
 
   /**
@@ -136,7 +142,7 @@ export const useAIResponseOrchestrator = () => {
     if (orchestrationLoopRef.current) {
       clearInterval(orchestrationLoopRef.current);
       orchestrationLoopRef.current = null;
-      console.log('[Orchestrator] Stopped orchestration loop');
+      logger.info('Orchestrator', 'Stopped orchestration loop');
     }
   }, []);
 
@@ -146,7 +152,7 @@ export const useAIResponseOrchestrator = () => {
    */
   const forceGenerateResponse = useCallback(
     (conversationHistory, difficulty) => {
-      console.log('[Orchestrator] Forcing response generation');
+      logger.info('Orchestrator', 'Forcing response generation');
       return generateProspectResponse(conversationHistory, difficulty);
     },
     [generateProspectResponse]
@@ -161,7 +167,7 @@ export const useAIResponseOrchestrator = () => {
     setError(null);
     setIsGenerating(false);
     lastGenerationTimeRef.current = 0;
-    console.log('[Orchestrator] Reset');
+    logger.info('Orchestrator', 'Reset');
   }, []);
 
   // Cleanup on unmount

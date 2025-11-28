@@ -137,6 +137,31 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
         setRecordingDuration(elapsed);
       }, 100);
 
+      // ============= AI SPEAKS FIRST =============
+      // Generate opening message from AI prospect
+      debugLog('PracticePage', 'Generating AI opening message');
+      const openingResponse = await orchestrator.forceGenerateResponse([], difficulty);
+      
+      if (openingResponse) {
+        // Add AI's opening to conversation
+        const prospectMessage = {
+          id: openingResponse.id || `prospect-opening-${Date.now()}`,
+          speaker: 'Prospect',
+          text: openingResponse.text,
+          timestamp: Date.now(),
+        };
+        setConversation([prospectMessage]);
+        debugSuccess('PracticePage', 'AI opening message added to conversation');
+
+        // Play the opening audio
+        const voiceConfig = prospect ? getProspectVoiceConfig(prospect.id) : getProspectVoiceConfig('sarah');
+        await tts.synthesizeAndPlay(openingResponse.text, voiceConfig);
+        debugSuccess('PracticePage', 'AI opening message playing');
+      } else {
+        debugWarn('PracticePage', 'Failed to generate AI opening message');
+      }
+      // ============================================
+
       debugSuccess('PracticePage', 'Recording started successfully');
       perf.end();
     } catch (err) {
