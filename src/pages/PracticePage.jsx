@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Play, Pause, Edit, Check, RotateCcw, Mic, StopCircle, X, ZoomIn, ZoomOut, Maximize2, AlertCircle } from 'lucide-react';
-import AnimatedScriptView from '../components/AnimatedScriptView';
-import PrompterLine from '../components/PrompterLine';
+import ConversationView from '../components/ConversationView';
+import SmartPrompter from '../components/SmartPrompter';
 import { supabase } from '../../supabaseClient';
 import { useNavigate } from 'react-router-dom';
 import { useAudioAnalyzer } from '../hooks/useAudioAnalyzer';
 import { useStreamingTranscription } from '../hooks/useStreamingTranscription';
 import { useAIResponseOrchestrator } from '../hooks/useAIResponseOrchestrator';
 import { useTextToSpeech } from '../hooks/useTextToSpeech';
+import { useSmartPrompter } from '../hooks/useSmartPrompter';
 import { getProspectVoiceConfig, getProspect } from '../lib/prospects';
 import { debugLog, debugError, debugWarn, debugTrace, debugSuccess, PerformanceTracker } from '../lib/debugUtils';
 
@@ -27,12 +28,13 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
   // ============= STATE MANAGEMENT =============
   const [isRecording, setIsRecording] = useState(false);
   const [isFrozen, setIsFrozen] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
-  const [path, setPath] = useState([]);
+  const [conversation, setConversation] = useState([]);
+  const [liveTranscript, setLiveTranscript] = useState('');
   const [zoom, setZoom] = useState(100);
   const [error, setError] = useState(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [sensitivity, setSensitivity] = useState(50);
+  const [prompterVisible, setPrompterVisible] = useState(true);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
   // ============= HOOKS =============
@@ -43,6 +45,7 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
   const transcription = useStreamingTranscription();
   const orchestrator = useAIResponseOrchestrator();
   const tts = useTextToSpeech();
+  const smartPrompter = useSmartPrompter(script);
 
   const navigate = useNavigate();
   const recordingStreamRef = useRef(null);
@@ -51,65 +54,38 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
 
   const { nodes, edges, metadata } = script || { nodes: [], edges: [], metadata: {} };
   const difficulty = passedDifficulty || metadata?.difficulty || 'Medium';
+
   // ============= INITIALIZATION =============
   const handleRestart = useCallback(() => {
-    if (nodes.length > 0) {
-      const rootNode = nodes.find(n => !edges.some(e => e.target === n.id)) || nodes[0];
-      setPath([rootNode.id]);
-      setRecordingDuration(0);
-      setIsFrozen(false);
-      setIsEditing(false);
-      setError(null);
-      orchestrator.reset();
-      transcription.reset();
-    }
-  }, [nodes, edges, orchestrator, transcription]);
+    setConversation([]);
+    setLiveTranscript('');
+    setRecordingDuration(0);
+    setIsFrozen(false);
+    setError(null);
+    orchestrator.reset();
+    transcription.reset();
+    debugSuccess('PracticePage', 'Session restarted');
+  }, [orchestrator, transcription]); // Removed smartPrompter from dependencies
 
   useEffect(() => {
     handleRestart();
-  }, [handleRestart]);
+    smartPrompter.reset(); // Reset smartPrompter directly here
+  }, []); // Empty deps - only run once on mount
 
-  // ============= NODE FLOW LOGIC =============
-  const nextPossibleNodes = useMemo(() => {
-    if (path.length === 0) return [];
-    const currentNodeId = path[path.length - 1];
-    return edges
-      .filter(e => e.source === currentNodeId)
-      .map(e => nodes.find(n => n.id === e.target))
-      .filter(Boolean);
-  }, [path, nodes, edges]);
-
-  const handleNodeClick = (nodeId) => {
-    if (isFrozen) return;
-
-    const currentNodeId = path[path.length - 1];
-    if (nextPossibleNodes.some(n => n.id === nodeId)) {
-      const newPath = [...path, nodeId];
-      setPath(newPath);
-    }
-  };
-
-  const handleTextChange = (e, nodeId) => {
-    const newText = e.target.value;
-    const newNodes = nodes.map(node => {
-      if (node.id === nodeId) {
-        return { ...node, data: { ...node.data, text: newText } };
-      }
-      return node;
-    });
-    setScript({ ...script, nodes: newNodes });
-  };
-
-  // ============= RECORDING MANAGEMENT =============
+  // ============= CONVERSATION MANAGEMENT =============
   const buildConversationHistory = useCallback(() => {
-    return path.map(nodeId => {
-      const node = nodes.find(n => n.id === nodeId);
-      return {
-        speaker: node.data.speaker,
-        text: node.data.text,
-      };
-    });
-  }, [path, nodes]);
+    return conversation.map(msg => ({
+      speaker: msg.speaker,
+      text: msg.text,
+    }));
+  }, [conversation]);
+
+  // Track live transcription
+  useEffect(() => {
+    if (transcription.transcript) {
+      setLiveTranscript(transcription.transcript);
+    }
+  }, [transcription.transcript]);
 
   const handleStartRecording = async () => {
     const perf = new PerformanceTracker('handleStartRecording');
@@ -175,7 +151,6 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
     try {
       debugTrace('PracticePage', 'recording_stop_attempt');
       setIsRecording(false);
-      setIsFrozen(true);
 
       // Stop all subsystems
       analyzer.stopAnalysis();
@@ -188,7 +163,21 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
       if (!finalTranscript) {
         debugWarn('PracticePage', 'Empty transcript returned');
       }
+
+      // Add user's message to conversation
+      if (finalTranscript) {
+        const userMessage = {
+          id: `user-${Date.now()}`,
+          speaker: 'You',
+          text: finalTranscript,
+          timestamp: Date.now(),
+        };
+        setConversation(prev => [...prev, userMessage]);
+        debugSuccess('PracticePage', 'User message added to conversation');
+      }
+
       setTranscript(finalTranscript);
+      setLiveTranscript('');
       debugSuccess('PracticePage', 'Transcription stopped', { transcriptLength: finalTranscript?.length || 0 });
 
       if (recordingTimerRef.current) {
@@ -241,25 +230,19 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
 
       const response = orchestrator.getQueuedResponse();
       if (response) {
-        // Create new prospect node
-        const newNodeId = String(Math.max(...nodes.map(n => parseInt(n.id))) + 1);
-        const newNode = {
-          id: newNodeId,
-          type: 'script',
-          position: { x: 0, y: 0 },
-          data: {
-            speaker: response.speaker,
-            text: response.text,
-          },
+        // Add prospect's response to conversation
+        const prospectMessage = {
+          id: response.id || `prospect-${Date.now()}`,
+          speaker: 'Prospect',
+          text: response.text,
+          timestamp: Date.now(),
         };
 
-        // Add to script
-        const updatedNodes = [...nodes, newNode];
-        setScript({ ...script, nodes: updatedNodes });
+        setConversation(prev => [...prev, prospectMessage]);
+        debugSuccess('PracticePage', 'Prospect response added to conversation');
 
-        // Advance path
-        const newPath = [...path, newNodeId];
-        setPath(newPath);
+        // Analyze response and update smart prompter
+        smartPrompter.analyzeAndSuggest(response.text, conversation);
 
         // Play audio for the response
         console.log('[PracticePage] Playing TTS for response:', response.text.substring(0, 50));
@@ -267,11 +250,10 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
         tts.synthesizeAndPlay(response.text, voiceConfig);
       }
     }
-  }, [orchestrator.queuedResponse, isRecording, isFrozen, path, nodes, script, animation, tts]);
+  }, [orchestrator.queuedResponse, isRecording, isFrozen, conversation, smartPrompter, prospect, tts]);
 
   // ============= UI CALCULATIONS =============
-  const progress = path.length > 0 && nodes.length > 0 ? (path.length / nodes.length) * 100 : 0;
-  const currentNodeId = path[path.length - 1];
+  const progress = conversation.length > 0 ? Math.min((conversation.length / 10) * 100, 100) : 0;
 
   // ============= RENDER ERROR STATE =============
   if (nodes.length === 0) {
@@ -293,41 +275,84 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
 
   // ============= MAIN RENDER =============
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 font-open-dyslexic overflow-hidden">
-      <div className="bg-gray-900 text-white rounded-lg shadow-2xl w-full max-w-6xl h-[95vh] flex flex-col overflow-hidden">
+    <div className="fixed inset-0 flex justify-center items-center z-50 font-['OpenDyslexic'] overflow-hidden"
+      style={{
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%)',
+      }}
+    >
+      {/* Animated Background Shapes */}
+      <div className="fixed inset-0 z-10 overflow-hidden pointer-events-none">
+        <div className="floating-shape absolute top-20 left-10 w-32 h-32 bg-white bg-opacity-10 rounded-full blur-xl"></div>
+        <div className="floating-shape absolute top-40 right-20 w-48 h-48 bg-purple-300 bg-opacity-20 rounded-full blur-2xl"></div>
+        <div className="floating-shape absolute bottom-20 left-1/4 w-40 h-40 bg-pink-300 bg-opacity-15 rounded-full blur-xl"></div>
+        <div className="floating-shape absolute bottom-32 right-1/3 w-56 h-56 bg-blue-300 bg-opacity-10 rounded-full blur-2xl"></div>
+      </div>
+
+      {/* Backdrop overlay */}
+      <div className="fixed inset-0 bg-black bg-opacity-20 z-20"></div>
+
+      <div className="relative z-50 rounded-3xl shadow-2xl w-full max-w-7xl h-[95vh] flex flex-col overflow-hidden"
+        style={{
+          background: 'linear-gradient(135deg, #e0f2fe 0%, #ddd6fe 50%, #fce7f3 100%)',
+        }}
+      >
         {/* ============= HEADER ============= */}
-        <div className="flex justify-between items-center p-4 border-b border-gray-700">
-          <div className="text-center">
-            <span className="text-sm uppercase tracking-widest text-gray-400">Difficulty</span>
-            <p className="text-xl font-bold text-yellow-400">{difficulty}</p>
+        <div className="relative flex justify-between items-center p-6 border-b border-purple-200/50"
+          style={{
+            background: 'linear-gradient(90deg, rgba(224, 242, 254, 0.8) 0%, rgba(221, 214, 254, 0.8) 50%, rgba(252, 231, 243, 0.8) 100%)',
+          }}
+        >
+          {/* Decorative elements */}
+          <div className="absolute inset-0 overflow-hidden pointer-events-none">
+            <div className="absolute top-2 right-16 w-24 h-24 bg-blue-400 rounded-full opacity-20 blur-xl"></div>
+            <div className="absolute bottom-2 left-12 w-28 h-28 bg-purple-400 rounded-full opacity-15 blur-2xl"></div>
           </div>
-          <div className="text-center">
-            <h2 className="text-2xl font-bold text-white">Practice Session</h2>
-            <p className="text-sm text-blue-400 mt-1">With: {prospectData.name}</p>
+
+          <div className="relative z-10 flex items-center gap-4">
+            <div className="px-4 py-2 rounded-xl bg-gradient-to-r from-yellow-400 to-orange-500 shadow-lg">
+              <span className="text-xs uppercase tracking-widest text-white font-bold">Difficulty</span>
+              <p className="text-lg font-bold text-white">{difficulty}</p>
+            </div>
+          </div>
+
+          <div className="relative z-10 text-center">
+            <h2 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+              Practice Session
+            </h2>
+            <p className="text-sm text-purple-600 mt-1 font-semibold">
+              With: {prospectData.name}
+            </p>
             {isRecording && (
-              <p className="text-sm text-red-400 mt-1">
-                Recording: {recordingDuration}s
-              </p>
+              <div className="flex items-center justify-center gap-2 mt-2">
+                <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
+                <p className="text-sm text-red-600 font-semibold">
+                  Recording: {recordingDuration}s
+                </p>
+              </div>
             )}
           </div>
-          <div className="flex gap-2">
+
+          <div className="relative z-10 flex gap-3">
             <button
               onClick={() => setZoom(Math.max(50, zoom - 10))}
-              className="text-gray-400 hover:text-white p-2"
+              className="p-2 rounded-lg bg-white/50 hover:bg-white/80 text-purple-600 transition-all shadow-md hover:shadow-lg"
               title="Zoom out"
             >
               <ZoomOut size={20} />
             </button>
-            <span className="text-xs text-gray-400 w-10 text-center pt-2">{zoom}%</span>
+            <span className="text-sm text-purple-700 font-semibold pt-2">{zoom}%</span>
             <button
               onClick={() => setZoom(Math.min(150, zoom + 10))}
-              className="text-gray-400 hover:text-white p-2"
+              className="p-2 rounded-lg bg-white/50 hover:bg-white/80 text-purple-600 transition-all shadow-md hover:shadow-lg"
               title="Zoom in"
             >
               <ZoomIn size={20} />
             </button>
-            <button onClick={onClose} className="text-gray-400 hover:text-white">
-              <X size={28} />
+            <button
+              onClick={onClose}
+              className="p-2 rounded-lg bg-white/50 hover:bg-white/80 text-purple-600 transition-all shadow-md hover:shadow-lg"
+            >
+              <X size={24} />
             </button>
           </div>
         </div>
@@ -389,32 +414,42 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
         )}
 
         {/* ============= CONVERSATION AREA ============= */}
-        <div className="relative flex-grow flex flex-col items-center overflow-hidden">
-          <AnimatedScriptView
-            nodes={nodes}
-            path={path}
-            nextPossibleNodes={nextPossibleNodes}
-            currentNodeId={currentNodeId}
-            isRecording={isRecording}
-            isFrozen={isFrozen}
-            isEditing={isEditing}
-            playbackSpeed={playbackSpeed}
-            zoom={zoom}
-            onNodeClick={handleNodeClick}
-            onTextChange={handleTextChange}
-          />
-        </div>
+        <ConversationView
+          conversation={conversation}
+          isRecording={isRecording}
+          liveTranscript={liveTranscript}
+          isAIThinking={orchestrator.isGenerating}
+          zoom={zoom}
+          prospectName={prospectData.name}
+        />
+
+        {/* ============= SMART PROMPTER ============= */}
+        <SmartPrompter
+          suggestedLine={smartPrompter.currentSuggestion?.text}
+          detectedIntent={smartPrompter.detectedIntent?.label}
+          confidence={smartPrompter.currentSuggestion?.confidence || 0}
+          alternatives={smartPrompter.alternatives}
+          onSelectAlternative={(alt) => smartPrompter.setSuggestion(alt.text, alt.nodeId)}
+          isVisible={prompterVisible}
+          onToggleVisibility={() => setPrompterVisible(!prompterVisible)}
+        />
 
         {/* ============= FOOTER CONTROLS ============= */}
-        <div className="bg-black bg-opacity-50 mt-auto z-20">
-          <div className="w-full bg-gray-700 h-1">
-            <div className="bg-indigo-500 h-1 transition-all" style={{ width: `${progress}%` }} />
+        <div className="relative z-20" style={{
+          background: 'linear-gradient(180deg, rgba(224, 242, 254, 0.8) 0%, rgba(221, 214, 254, 0.8) 50%, rgba(252, 231, 243, 0.8) 100%)',
+        }}>
+          {/* Progress bar */}
+          <div className="w-full h-2 bg-gradient-to-r from-purple-200 to-pink-200 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-purple-500 via-pink-500 to-orange-500 transition-all duration-500 shadow-lg"
+              style={{ width: `${progress}%` }}
+            />
           </div>
 
-          <div className="p-4 flex justify-center items-center gap-4 flex-wrap">
+          <div className="p-6 flex justify-center items-center gap-6 flex-wrap">
             <button
               onClick={handleRestart}
-              className="flex items-center gap-2 text-gray-300 hover:text-white disabled:opacity-50"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/60 hover:bg-white/90 text-purple-700 font-semibold disabled:opacity-50 shadow-md hover:shadow-lg transition-all transform hover:scale-105"
               disabled={isRecording}
               title="Restart practice"
             >
@@ -422,63 +457,36 @@ export default function PracticePage({ script, setScript, setFeedback, setTransc
             </button>
 
             <button
-              onClick={() => setIsEditing(!isEditing)}
-              className="flex items-center gap-2 text-gray-300 hover:text-white disabled:opacity-50"
-              disabled={!isFrozen}
-              title="Edit response text"
-            >
-              {isEditing ? <><Check size={20} /> Save</> : <><Edit size={20} /> Edit</>}
-            </button>
-
-            {!isRecording && (
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-400">Speed:</label>
-                <select
-                  value={playbackSpeed}
-                  onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
-                  className="bg-gray-700 border border-gray-600 text-white rounded px-2 py-1 text-xs"
-                >
-                  <option value={0.75}>0.75x</option>
-                  <option value={1}>1x</option>
-                  <option value={1.25}>1.25x</option>
-                  <option value={1.5}>1.5x</option>
-                </select>
-              </div>
-            )}
-
-            <button
               onClick={isRecording ? handleStopRecording : handleStartRecording}
-              className={`flex items-center gap-2 px-6 py-3 rounded-full font-semibold transform hover:scale-110 transition-transform ${
-                isRecording ? 'bg-red-600 text-white' : 'bg-green-600 text-white'
+              className={`flex items-center gap-3 px-8 py-4 rounded-2xl font-bold shadow-2xl transform hover:scale-110 transition-all ${
+                isRecording
+                  ? 'bg-gradient-to-r from-red-500 to-pink-600 text-white'
+                  : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white'
               }`}
               title={isRecording ? 'Stop recording' : 'Start recording'}
             >
               {isRecording ? (
                 <>
-                  <div className="w-3 h-3 rounded-full bg-white animate-pulse"></div>
-                  <StopCircle size={20} /> Stop
+                  <div className="flex gap-1">
+                    <div className="w-2 h-2 rounded-full bg-white animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                    <div className="w-2 h-2 rounded-full bg-white animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                    <div className="w-2 h-2 rounded-full bg-white animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                  </div>
+                  <StopCircle size={24} />
+                  <span className="text-lg">Stop Recording</span>
                 </>
               ) : (
                 <>
-                  <Mic size={20} /> Record
+                  <Mic size={24} />
+                  <span className="text-lg">Start Practice</span>
                 </>
               )}
             </button>
 
-            {isFrozen && (
-              <button
-                onClick={() => setIsFrozen(false)}
-                className="flex items-center gap-2 text-gray-300 hover:text-white"
-                title="Resume practice"
-              >
-                <Play size={20} /> Resume
-              </button>
-            )}
-
             {orchestrator.isGenerating && (
-              <div className="flex items-center gap-2 text-blue-400">
-                <div className="w-3 h-3 rounded-full bg-blue-400 animate-pulse"></div>
-                <span className="text-sm">AI thinking...</span>
+              <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500/20 to-purple-500/20 border border-blue-400/30">
+                <div className="w-3 h-3 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 animate-pulse shadow-lg"></div>
+                <span className="text-sm font-semibold text-purple-700">AI thinking...</span>
               </div>
             )}
           </div>

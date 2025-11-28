@@ -64,7 +64,7 @@ Prospect: [message]
 You: [message]
 Prospect: [message]
 You: [message]`;
-    const geminiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent', {
+    const geminiResponse = await fetch('https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -82,7 +82,7 @@ You: [message]`;
         ],
         generationConfig: {
           temperature: 0.7,
-          maxOutputTokens: 1024
+          maxOutputTokens: 2048
         }
       })
     });
@@ -101,11 +101,12 @@ You: [message]`;
     }
     const data = await geminiResponse.json();
     console.log('Gemini response structure:', JSON.stringify(data).substring(0, 500));
-    if (!data.candidates || !data.candidates[0]) {
+    if (!data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0]) {
       console.error('Invalid response structure:', data);
       return new Response(JSON.stringify({
         error: 'Invalid response from Gemini',
-        details: data
+        details: data,
+        finishReason: data.candidates?.[0]?.finishReason
       }), {
         status: 500,
         headers: {

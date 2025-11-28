@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -18,6 +18,7 @@ import { supabase } from '../../supabaseClient.js';
 import { getUser } from '../lib/supabaseAuth';
 import { useNavigate } from 'react-router-dom';
 
+// Define nodeTypes outside component to prevent recreation
 const nodeTypes = {
   script: ScriptNode,
 };
@@ -40,16 +41,27 @@ const ScriptBuilder = ({ script, setScript }) => {
 
   const addNode = useCallback((parentNodeId, parentNodePosition) => {
     const newNodeId = getId();
+
+    // Count existing children to calculate horizontal position
+    const existingChildren = edges.filter(e => e.source === parentNodeId).length;
+
+    const horizontalSpacing = 350; // Space between siblings
+    const verticalSpacing = 220;
+
+    // Spread siblings horizontally from parent
+    const childX = parentNodePosition.x + (existingChildren * horizontalSpacing) - (existingChildren > 0 ? horizontalSpacing / 2 : 0);
+    const childY = parentNodePosition.y + verticalSpacing;
+
     const newNode = {
       id: newNodeId,
       type: 'script',
       position: {
-        x: parentNodePosition.x,
-        y: parentNodePosition.y + 220,
+        x: childX,
+        y: childY,
       },
       data: {
         text: 'New line...',
-        addNode: (id, pos) => addNode(id, pos),
+        speaker: 'You',
       },
     };
 
@@ -62,7 +74,7 @@ const ScriptBuilder = ({ script, setScript }) => {
 
     setNodes((currentNodes) => currentNodes.concat(newNode));
     setEdges((currentEdges) => currentEdges.concat(newEdge));
-  }, []);
+  }, [edges]);
 
   const deleteNode = useCallback((nodeId) => {
     setNodes((nds) => nds.filter((node) => node.id !== nodeId));
@@ -89,38 +101,46 @@ const ScriptBuilder = ({ script, setScript }) => {
     setMenu(null);
   }, []);
 
-  useEffect(() => {
-    const nodesWithAddFunction = (nodesToMap) => {
-      return nodesToMap.map(node => ({
-        ...node,
-        data: {
-          ...node.data,
-          addNode: (id, pos) => addNode(id, pos),
-        }
-      }));
-    };
+  const nodesWithAddFunction = useMemo(() => {
+    if (!script || !script.nodes) return null;
+    return script.nodes.map(node => ({
+      ...node,
+      data: {
+        ...node.data,
+        addNode: (nodeId, position) => addNode(nodeId, position), // Pass addNode function (matches Node.jsx expectation)
+      }
+    }));
+  }, [script?.id, script?.name, addNode]);
 
+  const initialNodes = useMemo(() => {
+    if (nodesWithAddFunction) {
+      return nodesWithAddFunction;
+    }
+    const initialNodeId = getId();
+    return [
+      {
+        id: initialNodeId,
+        type: 'script',
+        position: { x: window.innerWidth / 2 - 150, y: 50 },
+        data: {
+          text: 'Start your script here...',
+          addNode: (nodeId, position) => addNode(nodeId, position), // Add function to initial node too!
+        },
+      },
+    ];
+  }, [nodesWithAddFunction, addNode]);
+
+  useEffect(() => {
     if (script && script.nodes) {
-      setNodes(nodesWithAddFunction(script.nodes));
+      setNodes(initialNodes);
       setEdges(script.edges || []);
       setScriptName(script.name || 'New Script');
     } else {
-      const initialNodeId = getId();
-      setNodes([
-        {
-          id: initialNodeId,
-          type: 'script',
-          position: { x: window.innerWidth / 2 - 150, y: 50 },
-          data: {
-            text: 'Start your script here...',
-            addNode: (id, pos) => addNode(id, pos),
-          },
-        },
-      ]);
+      setNodes(initialNodes);
       setEdges([]);
       setScriptName('New Script');
     }
-  }, [script, addNode]);
+  }, [initialNodes]);
 
   const onNodeContextMenu = (event, node) => {
     event.preventDefault();
