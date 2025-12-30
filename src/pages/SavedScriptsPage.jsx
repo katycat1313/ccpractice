@@ -4,10 +4,11 @@ import { getUser } from '../lib/supabaseAuth';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import PracticeOptionsModal from './PracticeOptionsModal';
-import PracticePage from './PracticePage';
+import PracticePage from "./PracticePageSimple";
 import { Edit, Trash2, Play } from 'lucide-react';
+import PropTypes from 'prop-types';
 
-export default function SavedScriptsPage({ setScript }) {
+export default function SavedScriptsPage({ setScript, setPracticeSettings }) {
   const [scripts, setScripts] = useState([]);
   const [practiceState, setPracticeState] = useState({ optionsOpen: false, practiceOpen: false, scriptToPractice: null });
   const [loading, setLoading] = useState(true);
@@ -42,17 +43,23 @@ export default function SavedScriptsPage({ setScript }) {
   };
 
   const handlePractice = (script) => {
-    setPracticeState({ optionsOpen: true, practiceOpen: false, scriptToPractice: script });
-  };
+  setPracticeState({ optionsOpen: true, practiceOpen: false, scriptToPractice: script });
+  setScript(script);
+};
 
-  const handleStartPractice = (options) => {
-    const scriptWithOptions = { 
-      ...practiceState.scriptToPractice, 
-      metadata: { ...practiceState.scriptToPractice.metadata, ...options } 
-    };
-    setScript(scriptWithOptions);
-    setPracticeState({ optionsOpen: false, practiceOpen: true, scriptToPractice: scriptWithOptions });
+ const handleStartPractice = (options) => {
+  const scriptWithOptions = { 
+    ...practiceState.scriptToPractice, 
+    metadata: { ...practiceState.scriptToPractice.metadata, ...options } 
   };
+  setScript(scriptWithOptions);
+  setPracticeSettings({
+    prospect: options.prospect,
+    difficulty: options.difficulty
+  });
+  setPracticeState({ optionsOpen: false, practiceOpen: false, scriptToPractice: null });
+  navigate('/practice');
+};
 
   const handleDelete = async (id) => {
     await supabase.from('scripts').delete().eq('id', id);
@@ -127,3 +134,9 @@ export default function SavedScriptsPage({ setScript }) {
     </div>
   );
 }
+
+
+SavedScriptsPage.propTypes = {
+  setScript: PropTypes.func.isRequired,
+  setPracticeSettings: PropTypes.func.isRequired,
+};

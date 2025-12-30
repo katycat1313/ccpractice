@@ -54,8 +54,6 @@ export default function SimplePracticePage({ onClose }) {
 
   const playAudio = async (text) => {
     try {
-      console.log('[SimplePractice] Playing audio:', text);
-
       // Use Gemini TTS
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
       if (!apiKey) {
@@ -120,7 +118,6 @@ export default function SimplePracticePage({ onClose }) {
       });
 
       URL.revokeObjectURL(audioUrl);
-      console.log('[SimplePractice] Audio playback complete');
     } catch (err) {
       console.error('[SimplePractice] Audio playback error:', err);
       setError(`Audio error: ${err.message}`);
@@ -129,8 +126,6 @@ export default function SimplePracticePage({ onClose }) {
 
   const getAIResponse = async (userText) => {
     try {
-      console.log('[SimplePractice] Getting AI response for:', userText);
-
       const { data, error } = await supabase.functions.invoke('generate-prospect-response', {
         body: {
           conversationHistory: [
@@ -144,7 +139,6 @@ export default function SimplePracticePage({ onClose }) {
       if (error) throw error;
 
       const responseText = data.responseText;
-      console.log('[SimplePractice] AI response:', responseText);
 
       setAiResponse(responseText);
       setConversationHistory(prev => [
@@ -165,7 +159,6 @@ export default function SimplePracticePage({ onClose }) {
   const startCall = async () => {
     try {
       setError(null);
-      console.log('[SimplePractice] Starting call...');
 
       // Get microphone access
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -177,11 +170,9 @@ export default function SimplePracticePage({ onClose }) {
         }
       });
       streamRef.current = stream;
-      console.log('[SimplePractice] Microphone access granted');
 
       // Get Deepgram API key from env
       const deepgramKey = import.meta.env.VITE_DEEPGRAM_API_KEY;
-      console.log('[SimplePractice] Deepgram key exists:', !!deepgramKey);
       if (!deepgramKey || deepgramKey === 'your_deepgram_api_key_here') {
         throw new Error('VITE_DEEPGRAM_API_KEY not configured. Please add your Deepgram API key to .env.local');
       }

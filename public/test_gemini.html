@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head><title>Test Gemini API</title></head>
+<body>
+<h1>Testing Gemini API Key</h1>
+<div id="result">Testing...</div>
+<script>
+const apiKey = 'AIzaSyDGmyhHc4mkY6f-Cs28lbcK0AZBYywvEh4';
+
+fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`)
+  .then(r => r.json())
+  .then(d => {
+    document.getElementById('result').innerHTML = '<h2>✅ API Key Works!</h2><pre>' + JSON.stringify(d, null, 2).substring(0, 500) + '</pre>';
+  })
+  .catch(e => {
+    document.getElementById('result').innerHTML = '<h2>❌ API Key Failed</h2><p>' + e.message + '</p>';
+  });
+</script>
+</body>
+</html>

@@ -26,7 +26,7 @@ const nodeTypes = {
 let id = 1;
 const getId = () => `${id++}`;
 
-const ScriptBuilder = ({ script, setScript }) => {
+const ScriptBuilder = ({ script, setScript, setPracticeSettings }) => {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [scriptName, setScriptName] = useState('New Script');
@@ -200,12 +200,22 @@ const ScriptBuilder = ({ script, setScript }) => {
   };
 
   const handleStartPractice = (options) => {
-    setScript({ 
+    // Save the current script with nodes and edges
+    const scriptData = { 
       ...script, 
       nodes, 
-      edges, 
+      edges,
+      content: JSON.stringify({ nodes, edges }), // Store as content
       metadata: { ...script?.metadata, difficulty: options.difficulty, prospect: options.prospect } 
+    };
+    setScript(scriptData);
+    
+    // Save practice settings
+    setPracticeSettings({
+      prospect: options.prospect,
+      difficulty: options.difficulty
     });
+    
     setIsPracticeModalOpen(false);
     navigate('/practice');
   };

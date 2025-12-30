@@ -15,10 +15,8 @@ import FeedbackPage from './pages/FeedbackPage';
 import SavedScriptsPage from './pages/SavedScriptsPage';
 import SettingsPage from './pages/SettingsPage';
 
-// Helper function to handle auth-based navigation
 const handleAuthNavigation = (session, currentPath, navigate) => {
   const isPublicRoute = PUBLIC_ROUTES.includes(currentPath);
-
   if (session && isPublicRoute) {
     navigate(ROUTES.DASHBOARD);
   } else if (!session && !isPublicRoute) {
@@ -28,9 +26,16 @@ const handleAuthNavigation = (session, currentPath, navigate) => {
 
 export default function App() {
   const [script, setScript] = useState(null);
-  const [session, setSession] = useState(null);
+  const [transcript, setTranscript] = useState(null);
   const [feedback, setFeedback] = useState(null);
-  const [transcript, setTranscript] = useState('');
+  const [session, setSession] = useState(null);
+  
+  // NEW: Practice session state
+  const [practiceSettings, setPracticeSettings] = useState({
+    prospect: null,
+    difficulty: null
+  });
+
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -59,13 +64,23 @@ export default function App() {
         </>
       ) : (
         <>
-          <Route path={ROUTES.DASHBOARD} element={<DashboardPage setScript={setScript} />} />
-          <Route path={ROUTES.SCRIPT_BUILDER} element={<ScriptBuilderPage script={script} setScript={setScript} />} />
-          <Route path={ROUTES.PRACTICE} element={<PracticePage onClose={() => navigate(ROUTES.DASHBOARD)} />} />
+          <Route path={ROUTES.DASHBOARD} element={<DashboardPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
+          <Route path={ROUTES.SCRIPT_BUILDER} element={<ScriptBuilderPage script={script} setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
+          <Route 
+            path={ROUTES.PRACTICE} 
+            element={
+              <PracticePage 
+                onClose={() => navigate(ROUTES.DASHBOARD)} 
+                prospect={practiceSettings.prospect}
+                difficulty={practiceSettings.difficulty}
+                script={script}
+              />
+            } 
+          />
           <Route path={ROUTES.FEEDBACK} element={<FeedbackPage feedback={feedback} transcript={transcript} script={script} />} />
-          <Route path={ROUTES.SAVED_SCRIPTS} element={<SavedScriptsPage setScript={setScript} />} />
+          <Route path={ROUTES.SAVED_SCRIPTS} element={<SavedScriptsPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
           <Route path={ROUTES.SETTINGS} element={<SettingsPage />} />
-          <Route path="*" element={<DashboardPage setScript={setScript} />} />
+          <Route path="*" element={<DashboardPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
         </>
       )}
     </Routes>

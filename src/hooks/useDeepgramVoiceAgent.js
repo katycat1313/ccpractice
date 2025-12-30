@@ -1,190 +1,195 @@
 import { useRef, useCallback, useState } from 'react';
-import { createClient } from '@deepgram/sdk';
-import { DEEPGRAM_CONFIG, AUDIO_CONFIG } from '../config/constants';
-import { logger } from '../lib/logger';
-
-/**
- * useDeepgramVoiceAgent
- *
- * Simple hook for DeepGram Voice Agent - handles voice input, AI conversation, and voice output
- * all in one WebSocket connection
- *
- * Usage:
- * const { startConversation, stopConversation, isConnected, messages } = useDeepgramVoiceAgent();
- */
 
 export const useDeepgramVoiceAgent = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [messages, setMessages] = useState([]);
   const [error, setError] = useState(null);
 
-  const deepgramRef = useRef(null);
-  const connectionRef = useRef(null);
+  const wsRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioContextRef = useRef(null);
+  const audioQueueRef = useRef([]);
+  const isPlayingRef = useRef(false);
 
-  /**
-   * Start the voice agent conversation
-   */
-  const startConversation = useCallback(async (apiKey) => {
+  const pcmToWav = (pcmData, sampleRate = 24000) => {
+    const numChannels = 1;
+    const bitsPerSample = 16;
+    const byteRate = sampleRate * numChannels * bitsPerSample / 8;
+    const blockAlign = numChannels * bitsPerSample / 8;
+    const dataSize = pcmData.byteLength;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+    
+    const writeString = (offset, string) => {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    };
+    
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitsPerSample, true);
+    writeString(36, 'data');
+    view.setUint32(40, dataSize, true);
+    
+    new Uint8Array(buffer, 44).set(new Uint8Array(pcmData));
+    return buffer;
+  };
+
+  const playAudio = useCallback((arrayBuffer, audioContext) => {
+    const wavBuffer = pcmToWav(arrayBuffer);
+    audioQueueRef.current.push(wavBuffer);
+    if (!isPlayingRef.current) {
+      playNextInQueue(audioContext);
+    }
+  }, []);
+
+  const playNextInQueue = (audioContext) => {
+    if (audioQueueRef.current.length === 0) {
+      isPlayingRef.current = false;
+      return;
+    }
+    isPlayingRef.current = true;
+    const arrayBuffer = audioQueueRef.current.shift();
+    audioContext.decodeAudioData(arrayBuffer)
+      .then(audioBuffer => {
+        const source = audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioContext.destination);
+        source.onended = () => playNextInQueue(audioContext);
+        source.start();
+      })
+      .catch(err => {
+        console.error('[Gemini] Audio decode error:', err);
+        playNextInQueue(audioContext);
+      });
+  };
+
+  const startConversation = useCallback(async (apiKey, personaPrompt = 'You are a sales prospect. Start by saying "Hello?"') => {
     try {
-      logger.info('VoiceAgent', 'Starting conversation');
+      console.log('[Gemini] Starting conversation with persona');
       setError(null);
       setMessages([]);
 
-      // Get microphone access
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: AUDIO_CONFIG.ECHO_CANCELLATION,
-          noiseSuppression: AUDIO_CONFIG.NOISE_SUPPRESSION,
-          autoGainControl: AUDIO_CONFIG.AUTO_GAIN_CONTROL,
-        }
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, sampleRate: 16000 }
       });
       mediaStreamRef.current = stream;
-      logger.success('VoiceAgent', 'Microphone access granted');
 
-      // Initialize Deepgram client
-      const deepgram = createClient(apiKey);
-      deepgramRef.current = deepgram;
+      const ws = new WebSocket(`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`);
+      wsRef.current = ws;
 
-      // Create voice agent connection
-      const connection = deepgram.speak.live({
-        model: DEEPGRAM_CONFIG.MODEL,
-        encoding: DEEPGRAM_CONFIG.ENCODING,
-        sample_rate: DEEPGRAM_CONFIG.SAMPLE_RATE,
-      });
-      connectionRef.current = connection;
-
-      // Set up audio context for playback
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
       audioContextRef.current = audioContext;
 
-      // Handle connection open
-      connection.on('open', () => {
-        logger.success('VoiceAgent', 'Connection opened');
+      ws.onopen = () => {
+        console.log('[Gemini] WebSocket connected');
+        console.log('[Gemini] Using persona:', personaPrompt.substring(0, 100) + '...');
+        
+        const setup = {
+          setup: {
+            model: 'models/gemini-2.5-flash-native-audio-preview-09-2025',
+            generation_config: {
+              response_modalities: ['AUDIO'],
+              speech_config: { voice_config: { prebuilt_voice_config: { voice_name: 'Puck' } } }
+            },
+            system_instruction: { parts: [{ text: personaPrompt }] }
+          }
+        };
+        ws.send(JSON.stringify(setup));
+        
+        setTimeout(() => {
+          ws.send(JSON.stringify({ client_content: { turns: [{ role: 'user', parts: [{ text: '' }] }], turn_complete: true } }));
+        }, 500);
+        
         setIsConnected(true);
-      });
+      };
 
-      // Handle audio data from AI
-      connection.on('audio', (audioData) => {
-        logger.debug('VoiceAgent', 'Received audio from AI');
-        // Play the audio
-        playAudio(audioData, audioContext);
-      });
-
-      // Handle text responses
-      connection.on('metadata', (metadata) => {
-        logger.debug('VoiceAgent', 'Received metadata', metadata);
-        if (metadata.text) {
-          setMessages(prev => [...prev, {
-            id: Date.now(),
-            speaker: 'AI',
-            text: metadata.text,
-            timestamp: Date.now(),
-          }]);
+      ws.onmessage = async (event) => {
+        if (event.data instanceof Blob) {
+          const text = await event.data.text();
+          try {
+            const message = JSON.parse(text);
+            handleGeminiMessage(message, stream, ws, audioContext);
+          } catch (e) {
+            console.log('[Gemini] Blob was not JSON');
+          }
+          return;
         }
-      });
+        
+        const message = JSON.parse(event.data);
+        console.log('[Gemini] Message:', message);
+        handleGeminiMessage(message, stream, ws, audioContext);
+      };
 
-      // Handle errors
-      connection.on('error', (err) => {
-        logger.error('VoiceAgent', 'Connection error', err);
-        setError(err.message);
-      });
-
-      // Handle connection close
-      connection.on('close', () => {
-        logger.info('VoiceAgent', 'Connection closed');
-        setIsConnected(false);
-      });
-
-      // Send audio from microphone to Deepgram
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0 && connection && connection.getReadyState() === 1) {
-          connection.send(event.data);
+      const handleGeminiMessage = (message, stream, ws, audioContext) => {
+        if (message.setupComplete) {
+          console.log('[Gemini] Setup complete - starting audio capture');
+          const source = audioContext.createMediaStreamSource(stream);
+          const processor = audioContext.createScriptProcessor(4096, 1, 1);
+          source.connect(processor);
+          processor.connect(audioContext.destination);
+          
+          processor.onaudioprocess = (e) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              const inputData = e.inputBuffer.getChannelData(0);
+              const pcmData = new Int16Array(inputData.length);
+              for (let i = 0; i < inputData.length; i++) {
+                const s = Math.max(-1, Math.min(1, inputData[i]));
+                pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+              }
+              const base64Audio = btoa(String.fromCharCode.apply(null, new Uint8Array(pcmData.buffer)));
+              ws.send(JSON.stringify({ realtime_input: { media_chunks: [{ mime_type: 'audio/pcm', data: base64Audio }] } }));
+            }
+          };
+          mediaRecorderRef.current = processor;
+        } else if (message.serverContent?.modelTurn) {
+          const parts = message.serverContent.modelTurn.parts || [];
+          for (const part of parts) {
+            if (part.inlineData?.mimeType?.includes('audio')) {
+              const audioData = atob(part.inlineData.data);
+              const arrayBuffer = new Uint8Array(audioData.length);
+              for (let i = 0; i < audioData.length; i++) {
+                arrayBuffer[i] = audioData.charCodeAt(i);
+              }
+              playAudio(arrayBuffer.buffer, audioContext);
+            }
+            if (part.text) {
+              setMessages(prev => [...prev, { id: Date.now(), speaker: 'Prospect', text: part.text, timestamp: Date.now() }]);
+            }
+          }
         }
       };
-      mediaRecorder.start(AUDIO_CONFIG.MEDIA_RECORDER_CHUNK_INTERVAL);
 
-      logger.success('VoiceAgent', 'Conversation started successfully');
+      ws.onerror = (err) => { console.error('[Gemini] Error:', err); setError('Connection error'); };
+      ws.onclose = () => { console.log('[Gemini] Closed'); setIsConnected(false); };
+
       return true;
-
     } catch (err) {
-      logger.error('VoiceAgent', 'Failed to start conversation', err);
+      console.error('[Gemini] Failed:', err);
       setError(err.message);
-      setIsConnected(false);
       return false;
     }
-  }, []);
+  }, [playAudio]);
 
-  /**
-   * Stop the voice agent conversation
-   */
   const stopConversation = useCallback(() => {
-    logger.info('VoiceAgent', 'Stopping conversation');
-
-    // Stop media recorder
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current = null;
-    }
-
-    // Close connection
-    if (connectionRef.current) {
-      connectionRef.current.finish();
-      connectionRef.current = null;
-    }
-
-    // Stop microphone
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(track => track.stop());
-      mediaStreamRef.current = null;
-    }
-
-    // Close audio context
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-
+    if (mediaRecorderRef.current) mediaRecorderRef.current.disconnect();
+    if (wsRef.current) wsRef.current.close();
+    if (mediaStreamRef.current) mediaStreamRef.current.getTracks().forEach(track => track.stop());
+    if (audioContextRef.current) audioContextRef.current.close();
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
     setIsConnected(false);
-    logger.success('VoiceAgent', 'Conversation stopped');
   }, []);
 
-  /**
-   * Play audio data
-   */
-  const playAudio = (audioData, audioContext) => {
-    try {
-      const audioBuffer = audioContext.createBuffer(
-        1, // mono
-        audioData.length / 2, // 16-bit samples
-        AUDIO_CONFIG.SAMPLE_RATE
-      );
-
-      const channelData = audioBuffer.getChannelData(0);
-      const dataView = new DataView(audioData.buffer);
-
-      for (let i = 0; i < channelData.length; i++) {
-        channelData[i] = dataView.getInt16(i * 2, true) / 32768;
-      }
-
-      const source = audioContext.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(audioContext.destination);
-      source.start();
-    } catch (err) {
-      logger.error('VoiceAgent', 'Audio playback error', err);
-    }
-  };
-
-  return {
-    startConversation,
-    stopConversation,
-    isConnected,
-    messages,
-    error,
-  };
+  return { startConversation, stopConversation, isConnected, messages, error };
 };

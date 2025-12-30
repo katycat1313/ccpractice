@@ -2,14 +2,13 @@ import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import Navbar from '../components/Navbar';
 import GenerateScriptModal from '../components/GenerateScriptModal';
-import PracticePage from './PracticePage';
 import PracticeOptionsModal from './PracticeOptionsModal';
 import { Plus, Zap, AlertTriangle, Loader } from 'lucide-react';
 import { supabase } from '../../supabaseClient';
 import { useNavigate } from 'react-router-dom';
 import { ROUTES, API_ENDPOINTS } from '../config/constants';
 
-export default function DashboardPage({ setScript }) {
+export default function DashboardPage({ setScript, setPracticeSettings }) {
   const [latestScript, setLatestScript] = useState(null);
   const [isPracticeModalOpen, setIsPracticeModalOpen] = useState(false);
   const [isPracticeOptionsOpen, setIsPracticeOptionsOpen] = useState(false);
@@ -75,8 +74,12 @@ export default function DashboardPage({ setScript }) {
   const handleStartPractice = (options) => {
     const scriptWithOptions = { ...latestScript, metadata: { ...latestScript.metadata, ...options } };
     setScript(scriptWithOptions);
+    setPracticeSettings({
+      prospect: options.prospect,
+      difficulty: options.difficulty
+    });
     setIsPracticeOptionsOpen(false);
-    setIsPracticeModalOpen(true);
+    navigate(ROUTES.PRACTICE);
   }
 
   const handleNewScript = () => {
@@ -215,4 +218,5 @@ export default function DashboardPage({ setScript }) {
 
 DashboardPage.propTypes = {
   setScript: PropTypes.func.isRequired,
+  setPracticeSettings: PropTypes.func.isRequired,
 };
