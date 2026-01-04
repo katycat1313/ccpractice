@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description"
+        content="EventPrompt Pro - Premium AI Prompt Library for Wedding & Event Planners. Save hours with expertly crafted prompts for client communication, vendor management, and more.">
+    <meta name="keywords"
+        content="wedding planner prompts, event planning AI, ChatGPT for wedding planners, event planner tools">
+    <title>EventPrompt Pro | AI Prompts for Wedding & Event Planners</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <!-- Hero Section -->
+    <header class="hero">
+        <nav class="nav-container">
+            <div class="logo">
+                <span class="logo-icon">✨</span>
+                <span class="logo-text">EventPrompt Pro</span>
+            </div>
+            <button class="cta-button-small" onclick="scrollToSection('pricing')">Get Started</button>
+        </nav>
+
+        <div class="hero-content">
+            <h1 class="hero-title">Stop Writing the Same Emails.</h1>
+            <h2 class="hero-subtitle">Start Creating Magic.</h2>
+            <p class="hero-description">
+                The ultimate AI prompt library designed exclusively for wedding & event planners.
+                Save 10+ hours per week with expertly crafted prompts for every scenario.
+            </p>
+            <button class="cta-button-large" onclick="scrollToSection('library')">
+                Explore 50+ Premium Prompts →
+            </button>
+            <div class="hero-stats">
+                <div class="stat">
+                    <span class="stat-number">50+</span>
+                    <span class="stat-label">Expert Prompts</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-number">5</span>
+                    <span class="stat-label">Categories</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-number">10hr+</span>
+                    <span class="stat-label">Time Saved/Week</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Features Section -->
+    <section class="features">
+        <h2 class="section-title">Why Event Planners Love Us</h2>
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">💬</div>
+                <h3>Professional Communication</h3>
+                <p>Perfectly crafted client and vendor messages that maintain your professional tone</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">⚡</div>
+                <h3>Instant Customization</h3>
+                <p>One-click variable substitution for client names, dates, and event details</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">📋</div>
+                <h3>Organized by Category</h3>
+                <p>Find exactly what you need: Client comms, vendor management, timelines & more</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🔍</div>
+                <h3>Smart Search</h3>
+                <p>Quickly find the perfect prompt with intelligent search and filtering</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Prompt Library Section -->
+    <section id="library" class="library">
+        <h2 class="section-title">Your Prompt Library</h2>
+
+        <!-- Search & Filter Controls -->
+        <div class="library-controls">
+            <div class="search-container">
+                <input type="text" id="searchInput" class="search-input" placeholder="Search prompts...">
+            </div>
+            <div class="filter-container">
+                <button class="filter-btn active" data-category="all">All</button>
+                <button class="filter-btn" data-category="client">Client Comms</button>
+                <button class="filter-btn" data-category="vendor">Vendors</button>
+                <button class="filter-btn" data-category="timeline">Timelines</button>
+                <button class="filter-btn" data-category="social">Social Media</button>
+                <button class="filter-btn" data-category="emergency">Emergency</button>
+            </div>
+        </div>
+
+        <!-- Prompts Grid -->
+        <div id="promptsContainer" class="prompts-grid">
+            <!-- Prompts will be dynamically inserted here -->
+        </div>
+    </section>
+
+    <!-- Pricing Section -->
+    <section id="pricing" class="pricing">
+        <h2 class="section-title">Choose Your Plan</h2>
+        <div class="pricing-grid">
+            <div class="pricing-card">
+                <div class="pricing-badge">FREE</div>
+                <h3 class="pricing-title">Starter</h3>
+                <div class="pricing-price">
+                    <span class="price-amount">$0</span>
+                </div>
+                <ul class="pricing-features">
+                    <li>✓ 10 handpicked prompts</li>
+                    <li>✓ Basic categories</li>
+                    <li>✓ Copy-to-clipboard</li>
+                    <li>✗ Variable customization</li>
+                    <li>✗ Full library access</li>
+                </ul>
+                <button class="pricing-button secondary" onclick="scrollToSection('library')">Start Free</button>
+            </div>
+
+            <div class="pricing-card featured">
+                <div class="pricing-badge popular">MOST POPULAR</div>
+                <h3 class="pricing-title">Premium</h3>
+                <div class="pricing-price">
+                    <span class="price-amount">$29</span>
+                    <span class="price-period">one-time</span>
+                </div>
+                <ul class="pricing-features">
+                    <li>✓ All 50+ premium prompts</li>
+                    <li>✓ All categories unlocked</li>
+                    <li>✓ Variable customization</li>
+                    <li>✓ Lifetime updates</li>
+                    <li>✓ Priority support</li>
+                </ul>
+                <button class="pricing-button primary" onclick="handlePurchase('premium')">Get Premium →</button>
+            </div>
+
+            <div class="pricing-card">
+                <div class="pricing-badge">PRO</div>
+                <h3 class="pricing-title">Pro</h3>
+                <div class="pricing-price">
+                    <span class="price-amount">$99</span>
+                    <span class="price-period">/month</span>
+                </div>
+                <ul class="pricing-features">
+                    <li>✓ Everything in Premium</li>
+                    <li>✓ Custom prompt creation</li>
+                    <li>✓ Industry consulting</li>
+                    <li>✓ White-label options</li>
+                    <li>✓ Dedicated account manager</li>
+                </ul>
+                <button class="pricing-button secondary" onclick="handlePurchase('pro')">Contact Sales</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="cta-section">
+        <h2 class="cta-title">Ready to Transform Your Workflow?</h2>
+        <p class="cta-description">Join hundreds of event planners saving 10+ hours every week</p>
+        <button class="cta-button-large" onclick="scrollToSection('pricing')">
+            Start Your Free Trial →
+        </button>
+
+        <!-- Post-Purchase Unlock -->
+        <div style="margin-top: 2rem;">
+            <button class="cta-button-small" onclick="unlockWithLicenseKey()"
+                style="background: transparent; border: 2px solid rgba(255,255,255,0.3);">
+                Already purchased? Unlock here
+            </button>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-logo">
+                <span class="logo-icon">✨</span>
+                <span class="logo-text">EventPrompt Pro</span>
+            </div>
+            <p class="footer-text">Premium AI prompts for the modern event planner</p>
+            <div class="footer-links">
+                <a href="#library">Prompts</a>
+                <a href="#pricing">Pricing</a>
+                <a href="mailto:hello@eventpromptpro.com">Contact</a>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Prompt Detail Modal -->
+    <div id="promptModal" class="modal">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+            <h3 id="modalTitle" class="modal-title"></h3>
+            <div id="modalCategory" class="modal-category"></div>
+            <p id="modalDescription" class="modal-description"></p>
+
+            <div id="variablesSection" class="variables-section"></div>
+
+            <div class="prompt-display">
+                <div id="modalPrompt" class="prompt-text"></div>
+                <button class="copy-button" onclick="copyPromptText()">
+                    <span id="copyIcon">📋</span> Copy Prompt
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>

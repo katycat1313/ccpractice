@@ -1,0 +1,22 @@
+{
+    "name": "cold-calling-coach",
+    "private": true,
+    "version": "1.0.0",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview"
+    },
+    "dependencies": {
+        "lucide-react": "^0.552.0",
+        "react": "^19.1.1",
+        "react-dom": "^19.1.1"
+    },
+    "devDependencies": {
+        "@tailwindcss/postcss": "^4.1.17",
+        "@vitejs/plugin-react": "^5.0.4",
+        "tailwindcss": "^4.1.17",
+        "vite": "^7.1.7"
+    }
+}
