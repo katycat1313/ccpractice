@@ -80,6 +80,11 @@ export const useDeepgramVoiceAgent = () => {
       setError(null);
       setMessages([]);
 
+      if (!apiKey) {
+        setError('Gemini API key is not configured. Please add your Gemini API Key in Settings or set VITE_GEMINI_API_KEY.');
+        return false;
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, sampleRate: 16000 }
       });
@@ -120,7 +125,7 @@ export const useDeepgramVoiceAgent = () => {
           try {
             const message = JSON.parse(text);
             handleGeminiMessage(message, stream, ws, audioContext);
-          } catch (e) {
+          } catch {
             console.log('[Gemini] Blob was not JSON');
           }
           return;

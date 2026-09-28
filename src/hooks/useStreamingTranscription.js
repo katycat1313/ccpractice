@@ -14,7 +14,7 @@ export const useStreamingTranscription = () => {
   
   const recognitionRef = useRef(null);
 
-  const startStreaming = useCallback(async (stream) => {
+  const startStreaming = useCallback(async (_stream) => {
     try {
       // Check if browser supports speech recognition
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;

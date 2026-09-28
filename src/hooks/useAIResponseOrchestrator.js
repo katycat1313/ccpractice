@@ -28,7 +28,7 @@ export const useAIResponseOrchestrator = () => {
    * Called predictively before user finishes speaking
    */
   const generateProspectResponse = useCallback(
-    async (conversationHistory, difficulty, transcript = '') => {
+    async (conversationHistory, difficulty, _transcript = '') => {
       const now = Date.now();
 
       // Debounce: don't generate if we just generated

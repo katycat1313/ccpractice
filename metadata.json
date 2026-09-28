@@ -1,0 +1,8 @@
+{
+  "name": "ScriptMaster - AI Cold Calling Coach",
+  "description": "Master your sales pitch and practice cold calling with AI-powered realistic prospect personalities, interactive script builder, and real-time voice feedback.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

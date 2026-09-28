@@ -7,7 +7,9 @@ export default function PracticePageSimple({ onClose, prospect, script, difficul
   const { startConversation, stopConversation, isConnected, messages, error } = useDeepgramVoiceAgent();
   const [scriptZoom, setScriptZoom] = useState(1);
   
-  const GEMINI_API_KEY = 'AIzaSyDGmyhHc4mkY6f-Cs28lbcK0AZBYywvEh4';
+  const [callError, setCallError] = useState(null);
+  
+  const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY || '';
 
   const DEFAULT_PROSPECT = {
     name: 'Jamie Taylor',
@@ -48,10 +50,19 @@ CRITICAL RULES:
   };
 
   const handleStart = async () => {
+    setCallError(null);
+    let key = GEMINI_API_KEY;
+    if (!key) {
+      try {
+        const { getUser } = await import('../lib/supabaseAuth');
+        const { data } = await getUser();
+        key = data?.user?.user_metadata?.gemini_api_key || '';
+      } catch (_) {}
+    }
     const personaPrompt = buildPersonaPrompt();
-    const success = await startConversation(GEMINI_API_KEY, personaPrompt);
+    const success = await startConversation(key, personaPrompt);
     if (!success) {
-      alert('Failed to start conversation. Check console for errors.');
+      setCallError('Could not start live voice agent. Ensure microphone permission is granted or configure your Gemini API Key in Settings.');
     }
   };
 
@@ -137,9 +148,9 @@ CRITICAL RULES:
           </div>
         </div>
 
-        {error && (
+        {(callError || error) && (
           <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 m-4 rounded">
-            <strong>Error:</strong> {error}
+            <strong>Error:</strong> {callError || error}
           </div>
         )}
 

@@ -12,13 +12,13 @@ import { useRef, useCallback, useEffect, useState } from 'react';
 
 export const useNodeAnimation = () => {
   const [scrollSpeed, setScrollSpeed] = useState(3000); // ms
-  const [isAnimating, setIsAnimating] = useState(false);
+  const [isAnimating, _setIsAnimating] = useState(false);
   const [visibleNodes, setVisibleNodes] = useState([]);
   
   const containerRef = useRef(null);
   const animationFrameRef = useRef(null);
   const nodeQueueRef = useRef([]);
-  const animationStateRef = useRef({
+  const _animationStateRef = useRef({
     startTime: null,
     duration: null,
     startPos: 0,
