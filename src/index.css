@@ -3,9 +3,36 @@
 @tailwind utilities;
 
 body {
-  font-family: 'OpenDyslexic', 'Inter', sans-serif;
-  background-color: #0f172a;
+  font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: #090a10;
   color: #f1f5f9;
+  letter-spacing: -0.011em;
+}
+
+/* Ensure inputs and password bullets are always crisp, bright white, and visible on all browsers */
+input {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+  caret-color: #00f0ff !important;
+}
+
+input[type="password"] {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
+  letter-spacing: 0.12em;
+}
+
+input::placeholder {
+  color: #64748b !important;
+  -webkit-text-fill-color: #64748b !important;
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover, 
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #ffffff !important;
+  -webkit-box-shadow: 0 0 0px 1000px #11131c inset !important;
+  box-shadow: 0 0 0px 1000px #11131c inset !important;
+  transition: background-color 5000s ease-in-out 0s;
 }
 
 @keyframes float {

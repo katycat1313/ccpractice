@@ -59,6 +59,7 @@ export const ROUTES = {
   PRACTICE: '/practice',
   FEEDBACK: '/feedback',
   SAVED_SCRIPTS: '/saved-scripts',
+  COACH: '/coach',
   SETTINGS: '/settings',
 };
 

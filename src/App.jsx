@@ -14,11 +14,14 @@ import PracticePage from './pages/PracticePageSimple';
 import FeedbackPage from './pages/FeedbackPage';
 import SavedScriptsPage from './pages/SavedScriptsPage';
 import SettingsPage from './pages/SettingsPage';
+import CoachPage from './pages/CoachPage';
+import ProgressPage from './pages/ProgressPage';
+import RebuttalsPage from './pages/RebuttalsPage';
 
 const handleAuthNavigation = (session, currentPath, navigate) => {
   const isPublicRoute = PUBLIC_ROUTES.includes(currentPath);
   if (session && isPublicRoute) {
-    navigate(ROUTES.DASHBOARD);
+    navigate(ROUTES.COACH);
   } else if (!session && !isPublicRoute) {
     navigate(ROUTES.LOGIN);
   }
@@ -40,17 +43,63 @@ export default function App() {
   const location = useLocation();
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      handleAuthNavigation(session, location.pathname, navigate);
-    });
+    const checkSession = async () => {
+      // Check if URL hash has access_token from Supabase
+      if (window.location.hash.includes('access_token')) {
+        try {
+          const hashParams = new URLSearchParams(window.location.hash.substring(1));
+          const accessToken = hashParams.get('access_token');
+          if (accessToken) {
+            await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: hashParams.get('refresh_token') || ''
+            });
+          }
+        } catch (_) {}
+      }
+
+      const { data: { session: remoteSession } } = await supabase.auth.getSession();
+      let localUser = JSON.parse(localStorage.getItem('scriptmaster_user') || 'null');
+      
+      // Auto-provision default guest closer profile if not already set,
+      // so opening the app immediately greets the user with the Human Avatar Coach
+      if (!localUser && !remoteSession) {
+        localUser = {
+          id: `usr-${Date.now()}`,
+          name: 'Sales Rep',
+          email: 'closer@scriptmaster.app',
+          role: 'Sales Representative',
+          created_at: new Date().toISOString()
+        };
+        localStorage.setItem('scriptmaster_user', JSON.stringify(localUser));
+      }
+
+      const effectiveSession = remoteSession || (localUser ? { user: localUser } : null);
+      setSession(effectiveSession);
+      handleAuthNavigation(effectiveSession, location.pathname, navigate);
+    };
+
+    checkSession();
+
+    const handleAuthEvent = () => {
+      checkSession();
+    };
+
+    window.addEventListener('scriptmaster_auth_changed', handleAuthEvent);
+    window.addEventListener('storage', handleAuthEvent);
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      handleAuthNavigation(session, location.pathname, navigate);
+      const localUser = JSON.parse(localStorage.getItem('scriptmaster_user') || 'null');
+      const effectiveSession = session || (localUser ? { user: localUser } : null);
+      setSession(effectiveSession);
+      handleAuthNavigation(effectiveSession, location.pathname, navigate);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      window.removeEventListener('scriptmaster_auth_changed', handleAuthEvent);
+      window.removeEventListener('storage', handleAuthEvent);
+      subscription.unsubscribe();
+    };
   }, [navigate, location.pathname]);
 
   return (
@@ -64,23 +113,32 @@ export default function App() {
         </>
       ) : (
         <>
-          <Route path={ROUTES.DASHBOARD} element={<DashboardPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
+          <Route path="/" element={<CoachPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
+          <Route path={ROUTES.DASHBOARD} element={<CoachPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
+          <Route path={ROUTES.COACH} element={<CoachPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
+          <Route path="/overview" element={<DashboardPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
           <Route path={ROUTES.SCRIPT_BUILDER} element={<ScriptBuilderPage script={script} setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
           <Route 
             path={ROUTES.PRACTICE} 
             element={
               <PracticePage 
-                onClose={() => navigate(ROUTES.DASHBOARD)} 
+                onClose={() => navigate(ROUTES.COACH)} 
                 prospect={practiceSettings.prospect}
                 difficulty={practiceSettings.difficulty}
+                callStage={practiceSettings.callStage}
+                callStrategy={practiceSettings.callStrategy}
                 script={script}
+                setFeedback={setFeedback}
+                setTranscript={setTranscript}
               />
             } 
           />
           <Route path={ROUTES.FEEDBACK} element={<FeedbackPage feedback={feedback} transcript={transcript} script={script} />} />
           <Route path={ROUTES.SAVED_SCRIPTS} element={<SavedScriptsPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
+          <Route path="/progress" element={<ProgressPage />} />
+          <Route path="/rebuttals" element={<RebuttalsPage />} />
           <Route path={ROUTES.SETTINGS} element={<SettingsPage />} />
-          <Route path="*" element={<DashboardPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
+          <Route path="*" element={<CoachPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
         </>
       )}
     </Routes>

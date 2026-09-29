@@ -4,8 +4,7 @@ import { getUser } from '../lib/supabaseAuth';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import PracticeOptionsModal from './PracticeOptionsModal';
-import PracticePage from "./PracticePageSimple";
-import { Edit, Trash2, Play } from 'lucide-react';
+import { Edit, Trash2, Play, Plus, BookOpen, Clock } from 'lucide-react';
 import PropTypes from 'prop-types';
 
 export default function SavedScriptsPage({ setScript, setPracticeSettings }) {
@@ -17,49 +16,58 @@ export default function SavedScriptsPage({ setScript, setPracticeSettings }) {
   useEffect(() => {
     let mounted = true;
     async function load() {
-      const u = await getUser();
-      const user = u?.data?.user;
-      if (!user) {
+      const localScripts = JSON.parse(localStorage.getItem('scriptmaster_saved_scripts') || '[]');
+      let combined = [...localScripts];
+
+      try {
+        const u = await getUser();
+        const user = u?.data?.user;
+        if (user) {
+          const { data, error } = await supabase.from('scripts').select('*').order('created_at', { ascending: false });
+          if (!error && data && data.length > 0) {
+            const ids = new Set(data.map(d => d.id));
+            const nonDupes = combined.filter(c => !ids.has(c.id));
+            combined = [...data, ...nonDupes];
+          }
+        }
+      } catch (err) {
+        console.warn('Supabase scripts fetch error, using local storage:', err);
+      }
+
+      if (mounted) {
+        setScripts(combined);
         setLoading(false);
-        return;
       }
-      const { data, error } = await supabase.from('scripts').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
-      if (error) {
-        console.error(error);
-      } else if (mounted) {
-        setScripts(data || []);
-      }
-      setLoading(false);
     }
     load();
     return () => { mounted = false; };
   }, []);
 
-  const handleLoad = (script) => {
+  const handleLoad = (targetScript) => {
     if (setScript) {
-      setScript({ id: script.id, name: script.name, nodes: script.nodes, edges: script.edges, metadata: script.metadata });
+      setScript({ id: targetScript.id, name: targetScript.name, nodes: targetScript.nodes, edges: targetScript.edges, metadata: targetScript.metadata });
       navigate('/script-builder');
     }
   };
 
-  const handlePractice = (script) => {
-  setPracticeState({ optionsOpen: true, practiceOpen: false, scriptToPractice: script });
-  setScript(script);
-};
-
- const handleStartPractice = (options) => {
-  const scriptWithOptions = { 
-    ...practiceState.scriptToPractice, 
-    metadata: { ...practiceState.scriptToPractice.metadata, ...options } 
+  const handlePractice = (targetScript) => {
+    setPracticeState({ optionsOpen: true, practiceOpen: false, scriptToPractice: targetScript });
+    setScript(targetScript);
   };
-  setScript(scriptWithOptions);
-  setPracticeSettings({
-    prospect: options.prospect,
-    difficulty: options.difficulty
-  });
-  setPracticeState({ optionsOpen: false, practiceOpen: false, scriptToPractice: null });
-  navigate('/practice');
-};
+
+  const handleStartPractice = (options) => {
+    const scriptWithOptions = { 
+      ...practiceState.scriptToPractice, 
+      metadata: { ...practiceState.scriptToPractice?.metadata, ...options } 
+    };
+    setScript(scriptWithOptions);
+    setPracticeSettings({
+      prospect: options.prospect,
+      difficulty: options.difficulty
+    });
+    setPracticeState({ optionsOpen: false, practiceOpen: false, scriptToPractice: null });
+    navigate('/practice');
+  };
 
   const handleDelete = async (id) => {
     await supabase.from('scripts').delete().eq('id', id);
@@ -67,74 +75,102 @@ export default function SavedScriptsPage({ setScript, setPracticeSettings }) {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-[#f8f9fa]">
+    <div className="flex flex-col min-h-screen bg-slate-950 text-slate-100 font-sans">
       <Navbar />
-      <main className="flex-1 p-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="flex justify-between items-center mb-8">
-            <h1 className="text-4xl font-bold text-[#212529]">Saved Scripts</h1>
-            <button onClick={() => { setScript(null); navigate('/script-builder'); }} className="bg-[#003366] text-white py-2 px-6 rounded-md hover:bg-[#0055a4] text-lg font-semibold transition-colors">
-              New Script
+      <main className="flex-1 p-6 md:p-10 max-w-5xl mx-auto w-full">
+        <div className="flex justify-between items-center mb-8">
+          <div>
+            <h1 className="text-3xl font-extrabold text-white">Saved Scripts</h1>
+            <p className="text-xs text-slate-400 mt-1">Manage, edit, and practice your cold calling templates</p>
+          </div>
+          <button 
+            onClick={() => { setScript(null); navigate('/script-builder'); }} 
+            className="bg-indigo-600 hover:bg-indigo-500 text-white py-2.5 px-4 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-lg"
+          >
+            <Plus className="w-4 h-4" /> New Script
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex justify-center items-center p-16">
+            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-500"></div>
+          </div>
+        ) : scripts.length === 0 ? (
+          <div className="text-center p-12 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl">
+            <BookOpen className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+            <h2 className="text-lg font-bold text-white mb-1">No Scripts Saved Yet</h2>
+            <p className="text-xs text-slate-400 mb-6">Create your first script or generate one using our templates.</p>
+            <button 
+              onClick={() => { setScript(null); navigate('/script-builder'); }} 
+              className="bg-indigo-600 hover:bg-indigo-500 text-white py-2.5 px-5 rounded-xl text-xs font-bold transition"
+            >
+              Build New Script
             </button>
           </div>
-          {loading ? (
-            <div className="flex justify-center items-center p-16">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#003366]"></div>
-            </div>
-          ) : scripts.length === 0 ? (
-            <div className="text-center p-16 bg-white rounded-lg shadow-lg">
-              <h2 className="text-2xl font-semibold text-[#212529] mb-2">No Scripts Yet</h2>
-              <p className="text-lg text-gray-600 mb-4">It looks like you haven't saved any scripts. Get started by creating one!</p>
-              <button onClick={() => { setScript(null); navigate('/script-builder'); }} className="bg-[#003366] text-white py-3 px-6 rounded-md hover:bg-[#0055a4] text-lg font-semibold transition-colors">
-                Create New Script
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-6">
-              {scripts.map((s) => (
-                <div key={s.id} className="p-6 bg-white rounded-lg shadow-lg flex justify-between items-center">
-                  <div className="flex-grow">
-                    <div className="font-semibold text-xl text-[#212529]">{s.name || 'Untitled'}</div>
-                    <div className="text-md text-gray-500 mt-1">
-                      {s.metadata?.difficulty && <span>{s.metadata.difficulty}</span>}
-                      {s.metadata?.difficulty && s.updated_at && <span className="mx-2">·</span>}
-                      {s.updated_at && <span>Last updated {new Date(s.updated_at).toLocaleDateString()}</span>}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => handlePractice(s)} className="p-3 text-white bg-[#00a8e8] hover:bg-[#009DD8] rounded-full transition-colors" aria-label="Practice Script">
-                      <Play size={20} />
-                    </button>
-                    <button onClick={() => handleLoad(s)} className="p-3 text-gray-600 hover:bg-gray-100 rounded-full transition-colors" aria-label="Edit Script">
-                      <Edit size={20} />
-                    </button>
-                    <button onClick={() => handleDelete(s.id)} className="p-3 text-red-600 hover:bg-red-50 rounded-full transition-colors" aria-label="Delete Script">
-                      <Trash2 size={20} />
-                    </button>
+        ) : (
+          <div className="grid grid-cols-1 gap-4">
+            {scripts.map((s) => (
+              <div 
+                key={s.id} 
+                className="p-5 bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl shadow-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition"
+              >
+                <div>
+                  <h3 className="text-base font-bold text-white mb-1">{s.name}</h3>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                    {s.metadata?.niche && (
+                      <span className="bg-slate-800 px-2 py-0.5 rounded text-indigo-300">
+                        {s.metadata.niche}
+                      </span>
+                    )}
+                    {s.metadata?.cta && (
+                      <span className="bg-slate-800 px-2 py-0.5 rounded text-emerald-300">
+                        Goal: {s.metadata.cta}
+                      </span>
+                    )}
+                    <span className="flex items-center gap-1 text-slate-500">
+                      <Clock className="w-3 h-3" />
+                      {new Date(s.created_at || Date.now()).toLocaleDateString()}
+                    </span>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+
+                <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+                  <button
+                    onClick={() => handlePractice(s)}
+                    className="py-2 px-3.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-1.5"
+                  >
+                    <Play className="w-3.5 h-3.5" /> Practice
+                  </button>
+                  <button
+                    onClick={() => handleLoad(s)}
+                    className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl border border-slate-700 transition"
+                    title="Edit Script Flow"
+                  >
+                    <Edit className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleDelete(s.id)}
+                    className="p-2 bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-400 rounded-xl border border-slate-700 transition"
+                    title="Delete Script"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </main>
+
       {practiceState.optionsOpen && (
         <PracticeOptionsModal
           onStart={handleStartPractice}
           onClose={() => setPracticeState({ optionsOpen: false, practiceOpen: false, scriptToPractice: null })}
         />
       )}
-      {practiceState.practiceOpen && practiceState.scriptToPractice && (
-        <PracticePage
-          script={practiceState.scriptToPractice}
-          setScript={setScript}
-          onClose={() => setPracticeState({ optionsOpen: false, practiceOpen: false, scriptToPractice: null })}
-        />
-      )}
     </div>
   );
 }
-
 
 SavedScriptsPage.propTypes = {
   setScript: PropTypes.func.isRequired,
