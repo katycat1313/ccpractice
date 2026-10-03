@@ -1,6 +1,7 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 
@@ -8,35 +9,72 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+
+// Set Permissions-Policy header to allow microphone and camera in parent iframes
+app.use((_req, res, next) => {
+  res.setHeader('Permissions-Policy', 'microphone=*, camera=*, display-capture=*, autoplay=*');
+  next();
+});
 
 app.use(express.json({ limit: '15mb' }));
 
-// Shared server-side Gemini client
-const apiKey = process.env.GEMINI_API_KEY || '';
-const isApiKeyConfigured = Boolean(apiKey && apiKey.trim().length > 15 && !apiKey.includes('YOUR_'));
+// Shared server-side Gemini client helper
+function getValidGeminiKey(explicitKey?: string): string {
+  const candidates = [
+    explicitKey,
+    process.env.VITE_GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY
+  ];
+  for (const k of candidates) {
+    if (k && typeof k === 'string' && k.trim().length > 20 && !k.includes('YOUR_')) {
+      return k.trim();
+    }
+  }
+  return '';
+}
+
+const serverApiKey = getValidGeminiKey();
+const isApiKeyConfigured = Boolean(serverApiKey);
 const deepgramApiKey = process.env.DEEPGRAM_API_KEY || '';
 const isDeepgramConfigured = Boolean(deepgramApiKey && deepgramApiKey.trim().length > 10 && !deepgramApiKey.includes('YOUR_'));
 
-const ai = new GoogleGenAI({
-  apiKey: apiKey,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
+function getGenAI(explicitKey?: string) {
+  const key = getValidGeminiKey(explicitKey);
+  return new GoogleGenAI({
+    apiKey: key,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      }
     }
-  }
+  });
+}
+
+const ai = getGenAI();
+
+app.get('/api/debug/keys', (req, res) => {
+  res.json({
+    hasValidGeminiKey: Boolean(getValidGeminiKey()),
+    geminiKeyLength: getValidGeminiKey().length,
+    isApiKeyConfigured,
+    deepgramKeyLength: (process.env.DEEPGRAM_API_KEY || '').length,
+  });
 });
 
 // 1. Coach Dialogue & Reasoning API
 app.post('/api/gemini/coach', async (req, res) => {
   const { 
     systemPrompt, 
-    messages, 
+    messages = [], 
     userMessage = '', 
     currentBusiness, 
     stage,
-    userMemory = {}
+    userMemory = {},
+    geminiApiKey: clientKey
   } = req.body;
+
+  const activeKey = getValidGeminiKey(clientKey);
 
   const firstName = currentBusiness?.ownerName ? currentBusiness.ownerName.split(' ')[0] : 'Hank';
   const company = currentBusiness?.name || 'Miller HVAC';
@@ -46,9 +84,11 @@ app.post('/api/gemini/coach', async (req, res) => {
   const userTarget = userMemory?.targetProspect || '';
   const userObjections = (userMemory?.objectionsToMaster || []).join(', ');
 
-  // Intelligent memory-aware fallback if API key is not ready or fails
+  // Multi-tier Intelligent Fallback Engine that NEVER repeats itself
   const getFallbackReply = () => {
-    // If roleplaying as prospect during active call
+    const historyText = ((messages || []).map((m: any) => m.text || '')).join(' ').toLowerCase();
+
+    // If roleplaying as prospect during active practice call
     if (stage === 'call_active') {
       if (text.includes('deposit') || text.includes('50%')) {
         return `Hold on, ${userName !== 'there' ? userName : ''}. 50% upfront before you've delivered working software? I've been burned by agencies before. Why shouldn't I pay when it's done?`;
@@ -56,31 +96,93 @@ app.post('/api/gemini/coach', async (req, res) => {
       if (text.includes('20 second') || text.includes('jump in a lake') || text.includes('quick')) {
         return `(Chuckles) Alright, you got 20 seconds before I head into this job site. What's this about?`;
       }
+      if (text.includes('price') || text.includes('cost') || text.includes('how much')) {
+        return `Give me the ballpark figure right now. I don't have time for a 45-minute demo just to find out it's out of my budget.`;
+      }
+      if (text.includes('busy') || text.includes('no time')) {
+        return `Look, my guys have three emergency calls lined up right now. Why shouldn't I just hang up?`;
+      }
       return `Look, my guys lose paper tickets all the time and unbilled materials cost us thousands. What exactly does your system do about that?`;
     }
 
-    if (text.includes('script') || text.includes('build') || text.includes('write')) {
-      const subject = userProduct ? userProduct : company;
-      return `Let's build this dynamic branching script for **${subject}**!\n\n1. **Pattern Interrupt:** "Hey ${firstName}, ${userName !== 'there' ? userName : 'Alex'} here. Give me 20 seconds before you head into your next job site: if this isn't relevant to stopping unbilled materials on your vans, tell me to jump in a lake. Fair?"\n2. **Bleeding Neck Pain:** "When your technicians finish an emergency dispatch on-site, how do you guarantee all extra copper, freon, and labor hours get billed before they drive off?"\n3. **Branch 1 (Busy):** "I know you're busy running calls. Are your techs losing paper slips under truck seats? If not, I'll hang up right now."\n4. **Branch 2 (Email):** "I could send an email, but your inbox is slammed. Give me 20 seconds right now..."\n5. **Branch 3 (50% Deposit):** "The 50% deposit locks in your sprint, and we milestone-stage it: you inspect Milestone 1 before releasing the second half."\n\nI've generated this interactive dynamic branching script below for you to inspect and drill!`;
+    // Action Intent 1: Save script to scripts page
+    if (text.includes('save') && (text.includes('script') || text.includes('page') || text.includes('library') || text.includes('it') || text.includes('this') || text.includes('board'))) {
+      return `Locked in! I saved your script directly to your Scripts page (/saved-scripts). You can pull it up or review your saved templates there anytime!\n\n\`\`\`json\n{\n  "action": "saveScriptToScriptsPage",\n  "params": {\n    "title": "${currentBusiness?.name ? currentBusiness.name + ' Closer' : 'Handled & Buddy - Field Ops Closer'}"\n  }\n}\n\`\`\``;
     }
 
+    // Action Intent 2: Pull up script
+    if (text.includes('pull up') || text.includes('load script') || text.includes('open script') || text.includes('show saved') || (text.includes('load') && (text.includes('carl') || text.includes('hvac') || text.includes('delbert') || text.includes('roof')))) {
+      return `Pulled up your script onto the active board and teleprompter!\n\n\`\`\`json\n{\n  "action": "pullUpScript",\n  "params": {\n    "query": "${userMessage.replace(/"/g, '')}"\n  }\n}\n\`\`\``;
+    }
+
+    // Action Intent 3: Open Practice Session
+    if (text.includes('open practice') || text.includes('start practice') || text.includes('let\'s practice') || text.includes('take it to the studio') || text.includes('take this to practice') || text.includes('drill')) {
+      return `Opening your Practice Studio session now with your teleprompter!\n\n\`\`\`json\n{\n  "action": "openPracticeSession",\n  "params": {}\n}\n\`\`\``;
+    }
+
+    // Action Intent 4: Navigate across app
+    if ((text.includes('go to') || text.includes('take me to') || text.includes('open') || text.includes('show') || text.includes('view')) && (text.includes('recording') || text.includes('dashboard') || text.includes('setting') || text.includes('saved scripts') || text.includes('scripts page') || text.includes('builder'))) {
+      return `Navigating there now!\n\n\`\`\`json\n{\n  "action": "navigateToPage",\n  "params": {\n    "page": "${userMessage.replace(/"/g, '')}"\n  }\n}\n\`\`\``;
+    }
+
+    // Normal mentor conversation progression (Step-by-Step Discovery)
+    // Step 1: Discover what they sell
+    const mentionsProduct = userProduct || text.includes('sell') || text.includes('roof') || text.includes('hvac') || text.includes('solar') || text.includes('software') || text.includes('service') || text.includes('company') || text.includes('contract');
+    if (mentionsProduct) {
+      if (!historyText.includes('who is your primary target')) {
+        return `Got it, ${userName}! Selling ${userProduct || 'your solution'} has serious upside when pitched properly. Who is your primary target when you pick up the phone—are you calling owners, general contractors, or operations directors?`;
+      }
+      if (!historyText.includes('biggest roadblock')) {
+        return `That makes total sense, ${userName}. Those decision makers get pitched constantly, so our hook has to be razor sharp. What's the biggest roadblock you run into right now—is it getting hung up on in the first 10 seconds, or handling objections like "send an email" or price?`;
+      }
+    }
+
+    // Step 2: Discover target prospect & deal dynamics
+    if (!userTarget || text.includes('owner') || text.includes('contractor') || text.includes('director') || text.includes('manager') || text.includes('client') || text.includes('customer')) {
+      if (!historyText.includes('biggest roadblock')) {
+        return `That makes total sense. Those decision makers get pitched constantly, so our hook has to be razor sharp. What's the biggest roadblock you run into right now—is it getting hung up on in the first 10 seconds, or handling objections like "send an email" or price?`;
+      }
+    }
+
+    // Step 3: Handle specific sales objections / advice
     if (text.includes('busy') || text.includes('no time')) {
-      return `I hear you, ${userName}! When prospects say "I'm too busy", it's an automatic reflex. Don't fight it—agree and pivot:\n*"I know you're slammed—that's exactly why I called. Give me 20 seconds: if this doesn't help you stop unbilled change orders, I'll hang up right now. Deal?"*\n\nTap my avatar or the mic to practice delivering that line to me!`;
+      return `Man, I hear that all the time. When prospects say "I'm busy", it's an automatic reflex shield. The secret is agreeing immediately and flipping the clock: *"I know you're slammed running your business—that's exactly why I called. Give me 20 seconds: if this isn't relevant, you can hang up right now."* That disarms them instantly.`;
     }
 
-    if (text.includes('email') || text.includes('send me')) {
-      return `Great objection to tackle, ${userName}. "Just send me an email" is the #1 brush-off. If you say yes, you're dead in spam.\n\nInstead say: *"I could email you, but your inbox is buried with vendor spam. Give me 30 seconds: if you don't find this valuable, you can hang up on me right now."*\n\nTap my avatar and try delivering that with confidence!`;
+    if (text.includes('email') || text.includes('send an email') || text.includes('send me info')) {
+      return `The classic "just send me an email" brush-off kills so many deals because it's a polite way to say no. Instead of agreeing, say: *"I could email you, but your inbox gets 50 vendor pitches a day. Give me 30 seconds: if you don't like what you hear, tell me to jump in a lake. Fair?"* Works like a charm.`;
     }
 
-    if (userProduct || text.includes('sell') || text.includes('calling')) {
-      return `Got it, ${userName}! I've locked in what you're working on: **${userProduct || 'your product'}**${userTarget ? ` pitched to **${userTarget}**` : ''}.\n\nWhen cold calling in this space, remember the **Commonalities & Friendship Principle**: people bond over shared background, regional familiarity, and everyday language—not corporate buzzwords.\n\nTap my avatar or mic right now and deliver your 15-second opening pitch. Let's calibrate your tone!`;
+    if (text.includes('gatekeeper') || text.includes('receptionist') || text.includes('front desk')) {
+      return `Gatekeepers are just doing their job protecting the boss's calendar. Never treat them like an obstacle—treat them like an ally. Use calm, peer-to-peer familiarity: *"Hey, is Hank around or is he out in the field today?"* Low pitch, high confidence, zero salesperson cadence.`;
     }
 
-    return `Got it, ${userName}! I've noted: *"${userMessage}"*.\n\n• **Direct Feedback:** Keep your delivery punchy, peer-to-peer, and avoid sounding like a telemarketer.\n• **The Commonalities Principle:** People bond over similarities (like recommending favorite TV shows). Weave in shared trade or regional details to disarm defenses instantly.\n\nTap my avatar anytime to speak to me, or dial our live practice call!`;
+    // Step 4: Ready to practice / baseline pitch
+    if (text.includes('ready') || text.includes('practice') || text.includes('baseline') || text.includes('pitch') || text.includes('start') || text.includes('call') || text.includes('try')) {
+      return `Love the confidence, ${userName}! Let's establish your baseline score. Hit the **"Start Practice Call (Hank Miller)"** button below whenever you're ready. I'll pick up the phone in character as your prospect, and you deliver your natural opening. Let's hear what you've got!`;
+    }
+
+    // Step 5: Natural alternating mentor follow-ups (Never repeat identical string)
+    const mentorFollowups = [
+      `That's great insight, ${userName}. In cold calling, the first 7 seconds are everything. Before we test it with a live practice drill, what do you think is your strongest hook right now?`,
+      `I really appreciate you breaking that down, ${userName}. That gives us a solid foundation to build our dynamic script. When you're ready to test your delivery against a tough contractor, we can fire up a practice call with Hank Miller. Are you ready to try a quick run, or do you want to polish your hook first?`,
+      `Spot on, ${userName}. One big rule I always teach reps: never ask "How are you today?" on a cold call—it flags you as an unsolicited telemarketer in 2 seconds. Instead, lead with peer-to-peer relevance. Whenever you feel ready to establish your baseline score, let me know or tap the practice call button!`,
+      `Got it, ${userName}. You've got the right instincts here. My goal as your coach is to make sure your 50% deposit closer and pattern interrupts become second nature. Tell me what you'd like to dive into next, or we can start a 30-second practice drill right now!`
+    ];
+
+    // Pick a followup that hasn't been said in recent history
+    for (const followup of mentorFollowups) {
+      const snippet = followup.slice(0, 30).toLowerCase();
+      if (!historyText.includes(snippet)) {
+        return followup;
+      }
+    }
+
+    return mentorFollowups[0];
   };
 
   try {
-    if (!isApiKeyConfigured) {
+    if (!activeKey) {
       return res.json({ text: getFallbackReply() });
     }
 
@@ -89,49 +191,114 @@ app.post('/api/gemini/coach', async (req, res) => {
     ).join('\n');
 
     const memoryDossier = `
-User Memory & Profile:
-Name: ${userName}
-Product / Service Sold: ${userProduct || 'Not specified yet'}
-Target Prospect Persona: ${userTarget || currentBusiness?.ownerName || 'Business Owner'}
-Known Stated Objections: ${userObjections || 'General cold calling'}
-User's Stated Goals: ${(userMemory?.goals || []).join('; ') || 'Mastering cold calls'}
+Rep Profile & Context Known So Far:
+- Name: ${userName}
+- Product / Service Sold: ${userProduct || 'Not yet stated'}
+- Target Prospect / Decision Maker: ${userTarget || 'Not yet stated'}
+- Key Objections Struggled With: ${userObjections || 'Not yet stated'}
+- Goals: ${(userMemory?.goals || []).join('; ') || 'Not yet stated'}
 `;
 
+    let stageInstructions = '';
+    if (stage === 'call_active') {
+      stageInstructions = `
+ACTIVE ROLEPLAY PRACTICE CALL IN PROGRESS:
+- You are strictly roleplaying as the prospect: ${currentBusiness?.ownerName || 'Hank'}, owner of ${currentBusiness?.name || 'Miller HVAC'}.
+- You are a busy, skeptical contractor/owner pulling up to a job site.
+- Respond realistically in character in 1-2 conversational sentences.
+`;
+    } else if (stage === 'script_building') {
+      stageInstructions = `
+YOU ARE COACH MARCUS VANCE:
+An aggressive, practical B2B Cold Calling Coach specializing in blue-collar trade contractors (general contractors, residential remodelers, HVAC, plumbing, excavation).
+- Critique opening hooks ruthlessly: cut corporate fluff, eliminate weak telemarketer greetings like "How are you today?", and enforce high-converting pattern interrupts using the 20-second contract.
+- Provide concise, lethal rebuttals tailored to local blue-collar jobsite objections (e.g., lack of cell service in the hollows, reliance on Sunday legal pad quotes, receipts faded under truck seats, buying on account at Ferguson, machine operators with muddy work gloves).
+- ALWAYS provide actionable, spoken lines enclosed in quotation marks so the user can click to apply them directly into their script with one click.
+`;
+    } else {
+      stageInstructions = `
+MENTORSHIP & DISCOVERY CONVERSATION (NOT A PRACTICE PITCH):
+- You are Marcus, a warm, energetic, experienced sales mentor sitting across from the rep.
+- TALK WITH THE USER LIKE A REAL HUMAN MENTOR, NOT A ROBOT!
+- CRITICAL: DO NOT treat ordinary user sentences as a pitch! If they say "I sell software" or "I'm calling plumbers", DO NOT critique them as if they just delivered a bad cold call pitch! Instead, acknowledge what they said with genuine interest, share a quick relatable mentor insight, and have a two-way dialogue.
+- If we haven't established what they sell, ask them.
+- If we haven't established who they target or their biggest hurdle, ask them.
+- If what they sell and who they target are clear, ask if they are ready to run a short practice pitch drill to establish their baseline, or if they want to brainstorm their hook first.
+- Keep the tone encouraging, conversational, direct, and empathetic. No markdown asterisks or bullet dumps in conversational speech.
+`;
+    }
+
     const prompt = `
-${systemPrompt || 'You are an elite, cut-the-BS AI Sales Coach & Prospect Simulator.'}
+${stageInstructions}
 
 ${memoryDossier}
 
 Target Prospect Context:
-Name: ${currentBusiness?.ownerName || 'Prospect'}
-Company: ${currentBusiness?.name || 'Target Business'}
-Industry: ${currentBusiness?.industry || 'Trade'}
-City: ${currentBusiness?.city || 'Local'}
-Bleeding Neck Pain: ${currentBusiness?.bleedingNeckPain || 'Losing money on unbilled materials and change orders'}
+Name: ${currentBusiness?.ownerName || currentBusiness?.target || 'West Virginia Contractor'}
+Company: ${currentBusiness?.name || currentBusiness?.companyName || 'Target Business'}
+Industry: ${currentBusiness?.industry || 'Construction & Trades'}
+City: ${currentBusiness?.city || 'West Virginia'}
+Bleeding Neck Pain: ${currentBusiness?.bleedingNeckPain || currentBusiness?.problem || 'Losing money on unbilled materials and change orders'}
 
-Recent Conversation Transcript:
+Recent Conversation History:
 ${conversationHistory}
 
 Latest User Input:
-${userMessage}
+"${userMessage}"
 
-CRITICAL INSTRUCTIONS:
-1. You MUST remember and explicitly reference what the user said, including their name (${userName}), product/industry (${userProduct || 'their offering'}), and specific objections.
-2. If roleplaying as the prospect, stay in character with realistic dialogue (1-2 sentences).
-3. If speaking as Coach, provide punchy, high-impact, actionable guidance. Prompt them to speak back to you via the avatar.
+Marcus, you have full power to take real actions on the application:
+1. When the user asks to save a script or add it to the scripts page (/saved-scripts), or you finalize a pitch, append:
+\`\`\`json
+{ "action": "saveScriptToScriptsPage", "params": { "title": "${currentBusiness?.name ? currentBusiness.name + ' Pitch' : 'Contractor Cold Call Pitch'}" } }
+\`\`\`
+2. When the user asks to pull up or load a script, append:
+\`\`\`json
+{ "action": "pullUpScript", "params": { "query": "${userMessage.replace(/"/g, '')}" } }
+\`\`\`
+3. When the user wants to practice ("let's practice", "open practice session"), append:
+\`\`\`json
+{ "action": "openPracticeSession", "params": {} }
+\`\`\`
+4. When the user wants to navigate to another page (recordings, dashboard, saved scripts, settings), append:
+\`\`\`json
+{ "action": "navigateToPage", "params": { "page": "${userMessage.replace(/"/g, '')}" } }
+\`\`\`
+5. When building or updating the script based on conversation (hook, problem, value, closingAsk), append:
+\`\`\`json
+{ "action": "updateActiveScript", "params": { "hook": "...", "problem": "...", "value": "...", "closingAsk": "..." } }
+\`\`\`
+
+Generate your natural, spoken-friendly response:
 `;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: prompt,
-      config: {
-        systemInstruction: systemPrompt || 'You are an authentic, direct Sales Coach and Prospect Simulator with deep conversational memory.',
-        temperature: 0.7,
+    // Multi-model cascade: Prioritize gemini-3.8-flash for modern features and tool calling
+    const modelsToTry = ['gemini-3.8-flash', 'gemini-flash-latest'];
+    let generatedText = '';
+    const effectiveGenAi = getGenAI(activeKey);
+
+    for (const modelName of modelsToTry) {
+      try {
+        const response = await effectiveGenAi.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            systemInstruction: stage === 'script_building' 
+              ? 'You are Marcus Vance, an aggressive, practical B2B Cold Calling Coach specializing in blue-collar trade contractors. Provide punchy lines in quotation marks.'
+              : 'You are Marcus, an elite, warm, authentic Human Sales Mentor. You speak naturally, conversationally, and empathetically like a supportive sales director.',
+            temperature: 0.7,
+          }
+        });
+        if (response?.text?.trim()) {
+          generatedText = response.text.trim();
+          break;
+        }
+      } catch (modelErr: any) {
+        console.warn(`Model ${modelName} notice:`, modelErr.message);
       }
-    });
+    }
 
     res.json({
-      text: response.text || getFallbackReply()
+      text: generatedText || getFallbackReply()
     });
   } catch (error: any) {
     console.warn('Gemini coach API notice, using intelligent fallback:', error.message);
@@ -326,47 +493,56 @@ app.post('/api/gemini/tts', async (req, res) => {
     return res.status(400).json({ error: 'Text is required for TTS' });
   }
 
-  // 1. Primary: Gemini Live Neural TTS
-  if (isApiKeyConfigured) {
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash-lite-tts',
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: text.slice(0, 400),
-                speechMetadata: {
-                  style: gender === 'female' 
-                    ? 'Clear, articulate American female executive delivery' 
-                    : 'Clear, authentic, confident American male coach delivery'
-                }
+  const customApiKey = (req.headers['x-gemini-api-key'] || req.body?.geminiApiKey) as string;
+  const effectiveKey = getValidGeminiKey(customApiKey);
+
+  // 1. Primary: Gemini Live Neural TTS (Studio Quality, Natural Human Voice)
+  try {
+    const genAiClient = getGenAI(effectiveKey);
+    const effectiveVoice = voiceName || (gender === 'female' ? 'Aoede' : 'Fenrir');
+    const response = await genAiClient.models.generateContent({
+      model: 'gemini-3.8-flash-lite-tts',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text: text.slice(0, 1500),
+              speechMetadata: {
+                style: gender === 'female' 
+                  ? 'Natural, articulate, warm American female voice with human breath and natural cadence' 
+                  : 'Natural, authentic, confident American male voice with human breath and natural cadence'
               }
-            ]
-          }
-        ],
-        config: {
-          responseModalities: ['AUDIO'],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: voiceName }
             }
+          ]
+        }
+      ],
+      config: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: effectiveVoice }
           }
         }
-      });
-
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (base64Audio) {
-        return res.json({ audioBase64: base64Audio, mimeType: 'audio/wav', engine: 'gemini-live' });
       }
-    } catch (_) {
-      // Intentionally silent: seamlessly proceed to Deepgram fallback
+    });
+
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (base64Audio) {
+      return res.json({ audioBase64: base64Audio, mimeType: 'audio/wav', engine: 'gemini-live' });
     }
+  } catch (err: any) {
+    console.warn('Gemini Live TTS notice, trying Deepgram fallback:', err?.message || err);
+    // Continue to Tier 2 Deepgram
   }
 
   // 2. Secondary: Deepgram Aura Fallback Voice Agent (Matches gender of avatar)
-  if (isDeepgramConfigured) {
+  const customDgKey = (req.headers['x-deepgram-api-key'] || req.body?.deepgramApiKey) as string;
+  const effectiveDgKey = (customDgKey && typeof customDgKey === 'string' && customDgKey.trim().length > 10)
+    ? customDgKey.trim()
+    : deepgramApiKey;
+
+  if (effectiveDgKey && effectiveDgKey.length > 10 && !effectiveDgKey.includes('YOUR_')) {
     try {
       const deepgramModel = gender === 'female'
         ? (personaKey === 'sarah' ? 'aura-asteria-en' : 'aura-stella-en')
@@ -375,10 +551,10 @@ app.post('/api/gemini/tts', async (req, res) => {
       const dgRes = await fetch(`https://api.deepgram.com/v1/speak?model=${encodeURIComponent(deepgramModel)}`, {
         method: 'POST',
         headers: {
-          'Authorization': `Token ${deepgramApiKey}`,
+          'Authorization': `Token ${effectiveDgKey}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ text: text.slice(0, 450) })
+        body: JSON.stringify({ text: text.slice(0, 1500) })
       });
 
       if (dgRes.ok) {
@@ -390,7 +566,7 @@ app.post('/api/gemini/tts', async (req, res) => {
         });
       }
     } catch (_) {
-      // Intentionally silent: proceed to browser speech fallback
+      // Intentionally silent
     }
   }
 
@@ -417,7 +593,7 @@ app.post('/api/deepgram/tts', async (req, res) => {
         'Authorization': `Token ${deepgramApiKey}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ text: text.slice(0, 450) })
+      body: JSON.stringify({ text: text.slice(0, 1500) })
     });
 
     if (!dgRes.ok) {
@@ -435,20 +611,161 @@ app.post('/api/deepgram/tts', async (req, res) => {
   }
 });
 
+// 6. Deepgram Agents Endpoint - Retrieves Agent IDs & Projects
+app.get('/api/deepgram/agents', async (req, res) => {
+  try {
+    const key = (req.headers.authorization?.replace('Token ', '').replace('Bearer ', '') || deepgramApiKey || '').trim();
+    if (!key) {
+      return res.status(400).json({ error: 'No Deepgram API key available' });
+    }
+
+    const projRes = await fetch('https://api.deepgram.com/v1/projects', {
+      headers: { 'Authorization': `Token ${key}` }
+    });
+
+    if (!projRes.ok) {
+      return res.status(projRes.status).json({ error: 'Failed to fetch projects from Deepgram' });
+    }
+
+    const projData = await projRes.json() as any;
+    const projects = projData.projects || [];
+    const allAgents: any[] = [];
+    const primaryProjectId = projects[0]?.project_id || '1add87dc-1582-4d89-9a7d-d2cee44bf542';
+
+    for (const proj of projects) {
+      try {
+        const agentRes = await fetch(`https://api.deepgram.com/v1/projects/${proj.project_id}/agents`, {
+          headers: { 'Authorization': `Token ${key}` }
+        });
+        if (agentRes.ok) {
+          const agents = await agentRes.json() as any[];
+          for (const a of agents) {
+            allAgents.push({
+              agent_uuid: a.agent_uuid,
+              projectId: proj.project_id,
+              projectName: proj.name,
+              title: a.metadata?.title || 'Voice Agent',
+              config: typeof a.config === 'string' ? JSON.parse(a.config) : a.config
+            });
+          }
+        }
+      } catch (err) {
+        console.warn(`Could not fetch agents for project ${proj.project_id}:`, err);
+      }
+    }
+
+    const recommended = allAgents.find(a => 
+      a.title?.toLowerCase().includes('scriptmaster') || 
+      a.agent_uuid === 'fd7da684-2c9c-433d-ab0c-1ed2f8b061e4'
+    ) || allAgents[0];
+
+    res.json({
+      success: true,
+      projectId: primaryProjectId,
+      projects,
+      agents: allAgents,
+      recommendedAgentId: recommended?.agent_uuid || 'fd7da684-2c9c-433d-ab0c-1ed2f8b061e4',
+      recommendedAgentTitle: recommended?.title || 'ScriptMaster AI Sales Coach & Prospect Simulator'
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Error querying Deepgram agents' });
+  }
+});
+
+// 7. Test Deepgram Agent ID Endpoint
+app.post('/api/deepgram/agent/test', async (req, res) => {
+  const startTime = Date.now();
+  try {
+    const key = (req.headers.authorization?.replace('Token ', '').replace('Bearer ', '') || deepgramApiKey || '').trim();
+    if (!key) {
+      return res.status(400).json({ success: false, error: 'Deepgram API key not provided' });
+    }
+
+    const { 
+      agentId = 'fd7da684-2c9c-433d-ab0c-1ed2f8b061e4', 
+      projectId = '1add87dc-1582-4d89-9a7d-d2cee44bf542' 
+    } = req.body || {};
+
+    // 1. Fetch agent configuration from Deepgram
+    const agentRes = await fetch(`https://api.deepgram.com/v1/projects/${encodeURIComponent(projectId)}/agents/${encodeURIComponent(agentId)}`, {
+      headers: { 'Authorization': `Token ${key}` }
+    });
+
+    if (!agentRes.ok) {
+      return res.status(agentRes.status).json({
+        success: false,
+        error: `Deepgram Agent verification failed (HTTP ${agentRes.status}). Check Agent UUID.`
+      });
+    }
+
+    const agentData = await agentRes.json() as any;
+    let parsedConfig: any = {};
+    try {
+      parsedConfig = typeof agentData.config === 'string' ? JSON.parse(agentData.config) : (agentData.config || {});
+    } catch (_) {}
+
+    const agentTitle = agentData.metadata?.title || 'ScriptMaster Voice Agent';
+    const voiceModel = parsedConfig.speak?.provider?.model || 'aura-2-jupiter-en';
+    const greetingText = parsedConfig.greeting || 'Hey there! Ready to run your cold call drill or tackle an objection?';
+    const listenModel = parsedConfig.listen?.provider?.model || 'flux-general-en';
+
+    // 2. Synthesize agent greeting audio using agent's configured Aura voice
+    const ttsRes = await fetch(`https://api.deepgram.com/v1/speak?model=${encodeURIComponent(voiceModel)}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Token ${key}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ text: greetingText })
+    });
+
+    let audioBase64 = '';
+    if (ttsRes.ok) {
+      const buffer = Buffer.from(await ttsRes.arrayBuffer());
+      audioBase64 = buffer.toString('base64');
+    }
+
+    const latencyMs = Date.now() - startTime;
+
+    res.json({
+      success: true,
+      agentId,
+      projectId,
+      agentTitle,
+      voiceModel,
+      listenModel,
+      greeting: greetingText,
+      latencyMs,
+      audioBase64,
+      mimeType: 'audio/mp3',
+      message: `Deepgram Agent "${agentTitle}" verified successfully (${latencyMs}ms)!`
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: err.message || 'Failed to verify Deepgram Voice Agent'
+    });
+  }
+});
+
 // Setup Vite middleware in dev or serve static files
 async function startServer() {
-  const isProd = process.env.NODE_ENV === 'production';
+  const distPath = path.resolve(__dirname, 'dist');
+  const hasDist = fs.existsSync(path.resolve(distPath, 'index.html'));
+  const isProd = hasDist && (process.env.NODE_ENV === 'production' || process.env.K_SERVICE !== undefined);
 
   if (!isProd) {
+    console.log('Starting Vite server in middleware mode...');
     const vite = await createViteServer({
       server: { middlewareMode: true, host: '0.0.0.0', port: 3000 },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(__dirname, 'dist');
+    console.log('Serving production build from dist...');
     app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
+    // In Express 5, catch-all must not use '*' directly
+    app.use((_req, res) => {
       res.sendFile(path.resolve(distPath, 'index.html'));
     });
   }

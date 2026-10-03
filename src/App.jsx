@@ -10,18 +10,20 @@ import CreateAccountPage from './pages/CreateAccountPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import DashboardPage from './pages/DashboardPage';
 import ScriptBuilderPage from './pages/ScriptBuilderPage';
-import PracticePage from './pages/PracticePageSimple';
+import PracticePage from './pages/PracticePage';
 import FeedbackPage from './pages/FeedbackPage';
 import SavedScriptsPage from './pages/SavedScriptsPage';
 import SettingsPage from './pages/SettingsPage';
 import CoachPage from './pages/CoachPage';
 import ProgressPage from './pages/ProgressPage';
 import RebuttalsPage from './pages/RebuttalsPage';
+import RecordingsPage from './pages/RecordingsPage';
+import WorkshopsPage from './pages/WorkshopsPage';
 
 const handleAuthNavigation = (session, currentPath, navigate) => {
   const isPublicRoute = PUBLIC_ROUTES.includes(currentPath);
   if (session && isPublicRoute) {
-    navigate(ROUTES.COACH);
+    navigate(ROUTES.DASHBOARD);
   } else if (!session && !isPublicRoute) {
     navigate(ROUTES.LOGIN);
   }
@@ -113,30 +115,20 @@ export default function App() {
         </>
       ) : (
         <>
-          <Route path="/" element={<CoachPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
-          <Route path={ROUTES.DASHBOARD} element={<CoachPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
-          <Route path={ROUTES.COACH} element={<CoachPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
+          <Route path="/" element={<DashboardPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
+          <Route path={ROUTES.DASHBOARD} element={<DashboardPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
           <Route path="/overview" element={<DashboardPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
+          <Route path={ROUTES.PRACTICE} element={<PracticePage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
+          <Route path={ROUTES.COACH} element={<CoachPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
           <Route path={ROUTES.SCRIPT_BUILDER} element={<ScriptBuilderPage script={script} setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
-          <Route 
-            path={ROUTES.PRACTICE} 
-            element={
-              <PracticePage 
-                onClose={() => navigate(ROUTES.COACH)} 
-                prospect={practiceSettings.prospect}
-                difficulty={practiceSettings.difficulty}
-                callStage={practiceSettings.callStage}
-                callStrategy={practiceSettings.callStrategy}
-                script={script}
-                setFeedback={setFeedback}
-                setTranscript={setTranscript}
-              />
-            } 
-          />
+          <Route path="/scripts" element={<SavedScriptsPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
+          <Route path="/recordings" element={<RecordingsPage />} />
           <Route path={ROUTES.FEEDBACK} element={<FeedbackPage feedback={feedback} transcript={transcript} script={script} />} />
           <Route path={ROUTES.SAVED_SCRIPTS} element={<SavedScriptsPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
           <Route path="/progress" element={<ProgressPage />} />
           <Route path="/rebuttals" element={<RebuttalsPage />} />
+          <Route path="/workshops" element={<WorkshopsPage />} />
+          <Route path="/workshop" element={<WorkshopsPage />} />
           <Route path={ROUTES.SETTINGS} element={<SettingsPage />} />
           <Route path="*" element={<CoachPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
         </>

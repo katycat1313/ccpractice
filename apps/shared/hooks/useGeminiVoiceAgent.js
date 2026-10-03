@@ -110,7 +110,7 @@ export const useGeminiVoiceAgent = ({ apiKey, voiceName = 'Puck' } = {}) => {
 
                 const setup = {
                     setup: {
-                        model: 'models/gemini-2.5-flash-native-audio-preview-09-2025',
+                        model: 'models/gemini-3.8-live',
                         generation_config: {
                             response_modalities: ['AUDIO'],
                             speech_config: { voice_config: { prebuilt_voice_config: { voice_name: voiceName } } }

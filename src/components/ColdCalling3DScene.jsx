@@ -569,6 +569,18 @@ export default function ColdCalling3DScene({
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', handleResize);
       container.removeEventListener('pointermove', handlePointerMove);
+      scene.traverse((obj) => {
+        if (obj.geometry) {
+          obj.geometry.dispose();
+        }
+        if (obj.material) {
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach((mat) => mat.dispose());
+          } else {
+            obj.material.dispose();
+          }
+        }
+      });
       if (renderer.domElement && container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
       }

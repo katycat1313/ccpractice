@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 
 /**
  * useSmartPrompter
@@ -149,6 +149,7 @@ export function useSmartPrompter(script) {
   const [currentSuggestion, setCurrentSuggestion] = useState(null);
   const [detectedIntent, setDetectedIntent] = useState(null);
   const [alternatives, setAlternatives] = useState([]);
+  const lastScriptIdRef = useRef(null);
 
   /**
    * Analyze the latest prospect response and update suggestions
@@ -228,14 +229,16 @@ export function useSmartPrompter(script) {
    * Get initial suggestion from script
    */
   useEffect(() => {
-    if (script && script.nodes && !currentSuggestion) {
+    const scriptId = script?.id || (script?.nodes?.length ? 'loaded' : null);
+    if (script && script.nodes && scriptId !== lastScriptIdRef.current) {
+      lastScriptIdRef.current = scriptId;
       // Find the first user node as initial suggestion
-      const firstUserNode = script.nodes.find(node => node.data.speaker === 'You');
+      const firstUserNode = script.nodes.find(node => node.data?.speaker === 'You');
       if (firstUserNode) {
         setSuggestion(firstUserNode.data.text, firstUserNode.id, 100);
       }
     }
-  }, [script, currentSuggestion, setSuggestion]);
+  }, [script, setSuggestion]);
 
   return {
     currentSuggestion,

@@ -2,97 +2,58 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
+html, body, #root {
+  background-color: #0F172A;
+  color: #f8fafc;
+  min-height: 100vh;
   font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background-color: #090a10;
-  color: #f1f5f9;
   letter-spacing: -0.011em;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Ensure inputs and password bullets are always crisp, bright white, and visible on all browsers */
-input {
-  color: #ffffff !important;
-  -webkit-text-fill-color: #ffffff !important;
-  caret-color: #00f0ff !important;
+/* Machined Dark Chassis Panels */
+.machined-card {
+  background: rgba(30, 41, 59, 0.8);
+  backdrop-filter: blur(12px);
+  border-radius: 16px;
+  border: 1px solid rgba(51, 65, 85, 0.8);
+  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5);
 }
 
-input[type="password"] {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
-  letter-spacing: 0.12em;
+.machined-card-hover {
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-input::placeholder {
+.machined-card-hover:hover {
+  transform: translateY(-2px);
+  border-color: rgba(99, 102, 241, 0.4);
+  box-shadow: 0 24px 48px -12px rgba(99, 102, 241, 0.15);
+}
+
+/* Ensure inputs are crisp dark chassis inputs */
+input, textarea, select {
+  color: #f8fafc !important;
+  -webkit-text-fill-color: #f8fafc !important;
+  caret-color: #6366f1 !important;
+  background-color: rgba(15, 23, 42, 0.8) !important;
+}
+
+input::placeholder, textarea::placeholder {
   color: #64748b !important;
   -webkit-text-fill-color: #64748b !important;
 }
 
-input:-webkit-autofill,
-input:-webkit-autofill:hover, 
-input:-webkit-autofill:focus {
-  -webkit-text-fill-color: #ffffff !important;
-  -webkit-box-shadow: 0 0 0px 1000px #11131c inset !important;
-  box-shadow: 0 0 0px 1000px #11131c inset !important;
-  transition: background-color 5000s ease-in-out 0s;
-}
-
-@keyframes float {
+@keyframes pulseGlow {
   0%, 100% {
-    transform: translateY(0) rotate(0deg);
+    transform: scale(1);
+    opacity: 0.8;
   }
   50% {
-    transform: translateY(-20px) rotate(5deg);
-  }
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
+    transform: scale(1.05);
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
-.floating-shape {
-  animation: float 6s ease-in-out infinite;
-}
-
-.floating-shape:nth-child(2) {
-  animation-delay: 1s;
-  animation-duration: 7s;
-}
-
-.floating-shape:nth-child(3) {
-  animation-delay: 2s;
-  animation-duration: 8s;
-}
-
-.floating-shape:nth-child(4) {
-  animation-delay: 1.5s;
-  animation-duration: 6.5s;
-}
-
-.animate-fadeIn {
-  animation: fadeIn 0.5s ease-out;
-}
-
-/* Custom scrollbar styling */
-.scrollbar-thin::-webkit-scrollbar {
-  width: 8px;
-}
-
-.scrollbar-thin::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.5);
-  border-radius: 4px;
-}
-
-.scrollbar-thin::-webkit-scrollbar-thumb {
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-  border-radius: 4px;
-}
-
-.scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(135deg, #818cf8 0%, #a78bfa 100%);
+.animate-pulseGlow {
+  animation: pulseGlow 3s ease-in-out infinite;
 }

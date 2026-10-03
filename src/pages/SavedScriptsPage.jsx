@@ -40,19 +40,38 @@ export default function SavedScriptsPage({ setScript, setPracticeSettings }) {
       }
     }
     load();
-    return () => { mounted = false; };
+
+    const handleUpdate = () => load();
+    window.addEventListener('scriptmaster_scripts_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+
+    return () => { 
+      mounted = false; 
+      window.removeEventListener('scriptmaster_scripts_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
   }, []);
 
   const handleLoad = (targetScript) => {
+    try {
+      localStorage.setItem('scriptmaster_active_script', JSON.stringify(targetScript));
+      localStorage.setItem('scriptmaster_active_script_timestamp', Date.now().toString());
+      window.dispatchEvent(new Event('scriptmaster_script_updated'));
+    } catch (_) {}
     if (setScript) {
-      setScript({ id: targetScript.id, name: targetScript.name, nodes: targetScript.nodes, edges: targetScript.edges, metadata: targetScript.metadata });
-      navigate('/script-builder');
+      setScript(targetScript);
     }
+    navigate('/script-builder');
   };
 
   const handlePractice = (targetScript) => {
-    setPracticeState({ optionsOpen: true, practiceOpen: false, scriptToPractice: targetScript });
-    setScript(targetScript);
+    try {
+      localStorage.setItem('scriptmaster_active_script', JSON.stringify(targetScript));
+      localStorage.setItem('scriptmaster_active_script_timestamp', Date.now().toString());
+      window.dispatchEvent(new Event('scriptmaster_script_updated'));
+    } catch (_) {}
+    if (setScript) setScript(targetScript);
+    navigate('/practice');
   };
 
   const handleStartPractice = (options) => {
@@ -60,18 +79,32 @@ export default function SavedScriptsPage({ setScript, setPracticeSettings }) {
       ...practiceState.scriptToPractice, 
       metadata: { ...practiceState.scriptToPractice?.metadata, ...options } 
     };
+    try {
+      localStorage.setItem('scriptmaster_active_script', JSON.stringify(scriptWithOptions));
+      localStorage.setItem('scriptmaster_active_script_timestamp', Date.now().toString());
+      window.dispatchEvent(new Event('scriptmaster_script_updated'));
+    } catch (_) {}
     setScript(scriptWithOptions);
-    setPracticeSettings({
-      prospect: options.prospect,
-      difficulty: options.difficulty
-    });
+    if (setPracticeSettings) {
+      setPracticeSettings({
+        prospect: options.prospect,
+        difficulty: options.difficulty
+      });
+    }
     setPracticeState({ optionsOpen: false, practiceOpen: false, scriptToPractice: null });
     navigate('/practice');
   };
 
   const handleDelete = async (id) => {
-    await supabase.from('scripts').delete().eq('id', id);
-    setScripts(scripts.filter(s => s.id !== id));
+    try {
+      await supabase.from('scripts').delete().eq('id', id);
+    } catch (_) {}
+    const updated = scripts.filter(s => s.id !== id);
+    setScripts(updated);
+    try {
+      localStorage.setItem('scriptmaster_saved_scripts', JSON.stringify(updated));
+      window.dispatchEvent(new Event('scriptmaster_scripts_updated'));
+    } catch (_) {}
   };
 
   return (
@@ -114,8 +147,11 @@ export default function SavedScriptsPage({ setScript, setPracticeSettings }) {
                 key={s.id} 
                 className="p-5 bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl shadow-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition"
               >
-                <div>
-                  <h3 className="text-base font-bold text-white mb-1">{s.name}</h3>
+                <div className="flex-1">
+                  <h3 className="text-base font-bold text-white mb-1">{s.title || s.name || 'Cold Call Script'}</h3>
+                  {s.hook && (
+                    <p className="text-xs text-slate-300 italic mb-2 line-clamp-2">"{s.hook}"</p>
+                  )}
                   <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
                     {s.metadata?.niche && (
                       <span className="bg-slate-800 px-2 py-0.5 rounded text-indigo-300">

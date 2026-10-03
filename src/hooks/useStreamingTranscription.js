@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState } from 'react';
+import { useRef, useCallback, useState, useEffect } from 'react';
 
 /**
  * useStreamingTranscription - BROWSER BUILT-IN VERSION
@@ -16,6 +16,15 @@ export const useStreamingTranscription = () => {
 
   const startStreaming = useCallback(async (_stream) => {
     try {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (stopErr) {
+          console.debug('Recognition stop error:', stopErr);
+        }
+        recognitionRef.current = null;
+      }
+
       // Check if browser supports speech recognition
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
@@ -91,6 +100,20 @@ export const useStreamingTranscription = () => {
   const reset = useCallback(() => {
     setCurrentTranscript('');
     setError(null);
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (unmountErr) {
+          console.debug('Recognition unmount error:', unmountErr);
+        }
+        recognitionRef.current = null;
+      }
+    };
   }, []);
 
   return {

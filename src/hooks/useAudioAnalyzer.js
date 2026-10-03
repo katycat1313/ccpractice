@@ -179,10 +179,36 @@ export const useAudioAnalyzer = (onSpeechEnd, onSpeechStart) => {
   }, [predictTurnCompletion]);
 
   /**
+   * Stop analyzing audio
+   */
+  const stopAnalysis = useCallback(() => {
+    if (processorRef.current) {
+      cancelAnimationFrame(processorRef.current);
+      processorRef.current = null;
+    }
+
+    if (audioContextRef.current) {
+      try {
+        if (audioContextRef.current.state !== 'closed') {
+          audioContextRef.current.close();
+        }
+      } catch (e) {
+        console.debug('Error closing audio context:', e);
+      }
+      audioContextRef.current = null;
+    }
+
+    analyserRef.current = null;
+    dataArrayRef.current = null;
+  }, []);
+
+  /**
    * Start analyzing audio from microphone stream
    */
   const startAnalysis = useCallback(async (stream) => {
     try {
+      stopAnalysis();
+
       const initialized = await initializeAudioContext(stream);
       if (!initialized) return false;
 
@@ -201,25 +227,7 @@ export const useAudioAnalyzer = (onSpeechEnd, onSpeechStart) => {
       console.error('Error starting analysis:', error);
       return false;
     }
-  }, [analyzeAudioFrame, initializeAudioContext]);
-
-  /**
-   * Stop analyzing audio
-   */
-  const stopAnalysis = useCallback(() => {
-    if (processorRef.current) {
-      cancelAnimationFrame(processorRef.current);
-      processorRef.current = null;
-    }
-
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-
-    analyserRef.current = null;
-    dataArrayRef.current = null;
-  }, []);
+  }, [analyzeAudioFrame, initializeAudioContext, stopAnalysis]);
 
   /**
    * Adjust silence threshold for different environments

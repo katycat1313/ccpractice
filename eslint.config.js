@@ -8,11 +8,9 @@ export default [
     ignores: [
       '**/node_modules/**',
       '**/dist/**',
-      '.backup/**',
-      'untitled folder/**',
       'apps/**',
-      'ccpractice/**',
       'jest.config.js',
+      'jest.config.cjs',
     ],
   },
   {

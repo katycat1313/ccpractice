@@ -205,6 +205,19 @@ const AnimatedScriptViewEnhanced = ({
       debugWarn('AnimatedScriptViewEnhanced', 'Layout exceeded max iterations', { maxIterations });
     }
 
+    // Position any disconnected / unreached nodes in a neat row below
+    let unvisitedCount = 0;
+    nodes.forEach(node => {
+      if (!visited.has(node.id)) {
+        visited.add(node.id);
+        positioned[node.id] = {
+          x: unvisitedCount * 260,
+          y: (nodes.length > 1 ? 360 : 0)
+        };
+        unvisitedCount++;
+      }
+    });
+
     const result = nodes.map(node => ({
       ...node,
       x: positioned[node.id]?.x || 0,

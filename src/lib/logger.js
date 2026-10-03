@@ -12,7 +12,10 @@ const LOG_LEVELS = {
 };
 
 // Set log level based on environment
-const CURRENT_LOG_LEVEL = import.meta.env.DEV ? LOG_LEVELS.TRACE : LOG_LEVELS.INFO;
+const isDev = Boolean(
+  typeof globalThis !== 'undefined' && globalThis.process?.env?.NODE_ENV !== 'production'
+);
+const CURRENT_LOG_LEVEL = isDev ? LOG_LEVELS.TRACE : LOG_LEVELS.INFO;
 
 // Color codes for different log levels
 const COLORS = {

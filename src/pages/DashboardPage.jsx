@@ -1,434 +1,424 @@
 import React, { useState, useEffect } from 'react';
-import PropTypes from 'prop-types';
 import Navbar from '../components/Navbar';
-import GenerateScriptModal from '../components/GenerateScriptModal';
-import PracticeOptionsModal from './PracticeOptionsModal';
 import { 
-  Plus, 
-  Zap, 
-  AlertTriangle, 
-  Loader, 
-  Hammer, 
-  Bot, 
   PhoneCall, 
-  DollarSign, 
-  Play, 
+  FileText, 
+  Settings, 
   ArrowRight,
   Flame,
-  CheckCircle2
+  Radio,
+  Cpu,
+  Eye,
+  BookmarkCheck,
+  Zap,
+  ChevronRight
 } from 'lucide-react';
-import { supabase } from '../../supabaseClient';
-import { useNavigate } from 'react-router-dom';
-import { ROUTES, API_ENDPOINTS } from '../config/constants';
-import { PROSPECTS } from '../lib/prospects';
+import { useNavigate, Link } from 'react-router-dom';
+import { getCoachMemory } from '../lib/coachMemory';
+import { getCustomProspects, getSelectedProspectId, setSelectedProspectId } from '../lib/prospectManager';
+import { getRecordings } from '../lib/recordingsService';
+import IframeMicModal from '../components/IframeMicModal';
 
-export default function DashboardPage({ setScript, setPracticeSettings }) {
-  const [latestScript, setLatestScript] = useState(null);
-  const [allScripts, setAllScripts] = useState([]);
-  const [isPracticeOptionsOpen, setIsPracticeOptionsOpen] = useState(false);
-  const [userName, setUserName] = useState('');
-  const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generateError, setGenerateError] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+export default function DashboardPage() {
   const navigate = useNavigate();
 
-  useEffect(() => {
-    const fetchDashboardData = async () => {
-      try {
-        setLoading(true);
-        setError(null);
+  const [userName, setUserName] = useState('Katy');
+  const [prospects, setProspects] = useState([]);
+  const [recordingsCount, setRecordingsCount] = useState(0);
+  const [activeProspect, setActiveProspect] = useState(null);
+  const [isIframeMicModalOpen, setIsIframeMicModalOpen] = useState(false);
 
-        let currentUser = null;
-        try {
-          const { data: { user } } = await supabase.auth.getUser();
-          currentUser = user;
-        } catch (_) {}
-
-        if (!currentUser) {
-          currentUser = JSON.parse(localStorage.getItem('scriptmaster_user') || 'null');
-        }
-
-        if (!currentUser) {
-          navigate(ROUTES.LOGIN);
-          return;
-        }
-
-        setUserName(currentUser.name || currentUser.user_metadata?.name || currentUser.email?.split('@')[0] || 'Sales Closer');
-
-        // Fetch scripts from Supabase and merge with local storage
-        const localScripts = JSON.parse(localStorage.getItem('scriptmaster_saved_scripts') || '[]');
-        let scriptsList = [...localScripts];
-
-        try {
-          const { data, error: scriptError } = await supabase
-            .from('scripts')
-            .select('*')
-            .order('created_at', { ascending: false });
-          
-          if (!scriptError && data && data.length > 0) {
-            const ids = new Set(data.map(d => d.id));
-            const nonDupes = scriptsList.filter(s => !ids.has(s.id));
-            scriptsList = [...data, ...nonDupes];
-          }
-        } catch (scriptErr) {
-          console.warn("Using local scripts cache:", scriptErr);
-        }
-
-        if (scriptsList.length > 0) {
-          setAllScripts(scriptsList);
-          setLatestScript(scriptsList[0]);
-        }
-
-      } catch (err) {
-        console.error("Error loading dashboard:", err);
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchDashboardData();
-  }, [navigate]);
-
-  const handlePractice = () => {
-    if (latestScript) {
-      setIsPracticeOptionsOpen(true);
-    }
-  };
-
-  const handleStartPractice = (options) => {
-    const scriptWithOptions = { ...latestScript, metadata: { ...latestScript?.metadata, ...options } };
-    setScript(scriptWithOptions);
-    setPracticeSettings({
-      prospect: options.prospect,
-      difficulty: options.difficulty
-    });
-    setIsPracticeOptionsOpen(false);
-    navigate(ROUTES.PRACTICE);
-  };
-
-  const handleQuickLaunchScenario = (scriptId, prospectKey, difficulty = 'medium') => {
-    const foundScript = allScripts.find(s => s.id === scriptId) || latestScript;
-    const prospect = PROSPECTS[prospectKey] || PROSPECTS.hank;
-
-    setScript(foundScript);
-    setPracticeSettings({
-      prospect,
-      difficulty
-    });
-    navigate(ROUTES.PRACTICE);
-  };
-
-  const handleNewScript = () => {
-    setScript(null);
-    navigate(ROUTES.SCRIPT_BUILDER);
-  };
-
-  const handleGenerateSubmit = async (formData) => {
-    setIsGenerating(true);
-    setGenerateError(null);
+  // Live Avatar Cost-Toggle State
+  const [isAvatarEnabled, setIsAvatarEnabled] = useState(() => {
     try {
-      const { data, error: genError } = await supabase.functions.invoke(API_ENDPOINTS.GENERATE_SCRIPT, {
-        body: formData,
-      });
+      const saved = localStorage.getItem('scriptmaster_live_avatar_enabled');
+      if (saved !== null) return JSON.parse(saved);
+    } catch {
+      /* ignore */
+    }
+    return true;
+  });
 
-      if (genError) {
-        throw genError;
-      }
+  const isInIframe = typeof window !== 'undefined' && (() => {
+    try {
+      return window.self !== window.top;
+    } catch {
+      return true;
+    }
+  })();
 
-      setScript(data);
-      setIsGenerateModalOpen(false);
-      navigate(ROUTES.SCRIPT_BUILDER);
-    } catch (err) {
-      console.error("Error invoking generate-script function:", err);
-      let errorMessage = err.message || 'An unexpected error occurred during script generation.';
-      setGenerateError(errorMessage);
-    } finally {
-      setIsGenerating(false);
+  useEffect(() => {
+    const localUser = JSON.parse(localStorage.getItem('scriptmaster_user') || '{}');
+    const memory = getCoachMemory();
+    
+    let resolvedName = 'Katy';
+    if (localUser.name && localUser.name !== 'Sales Rep') {
+      resolvedName = localUser.name.split(' ')[0];
+    } else if (localUser.email) {
+      const prefix = localUser.email.split('@')[0].replace(/[0-9]/g, '');
+      resolvedName = prefix ? prefix.charAt(0).toUpperCase() + prefix.slice(1) : 'Katy';
+    } else if (memory.userName && memory.userName !== 'there') {
+      resolvedName = memory.userName;
+    }
+    setUserName(resolvedName);
+
+    const proList = getCustomProspects();
+    setProspects(proList);
+
+    const activeId = getSelectedProspectId();
+    const current = proList.find(p => p.id === activeId) || proList[0] || null;
+    setActiveProspect(current);
+
+    const recs = getRecordings();
+    setRecordingsCount(recs.length);
+  }, []);
+
+  const handleToggleAvatar = () => {
+    const next = !isAvatarEnabled;
+    setIsAvatarEnabled(next);
+    try {
+      localStorage.setItem('scriptmaster_live_avatar_enabled', JSON.stringify(next));
+    } catch {
+      /* ignore */
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex flex-col h-screen bg-slate-950 text-white">
-        <Navbar />
-        <div className="flex-1 flex justify-center items-center">
-          <Loader className="w-10 h-10 animate-spin text-indigo-500" />
-        </div>
-      </div>
-    );
-  }
+  const handleSelectAndCall = (prospect) => {
+    setSelectedProspectId(prospect.id);
+    if (isInIframe) {
+      setIsIframeMicModalOpen(true);
+      return;
+    }
+    navigate('/practice');
+  };
+
+  const handleInstantWarmup = () => {
+    if (isInIframe) {
+      setIsIframeMicModalOpen(true);
+      return;
+    }
+    navigate('/workshops');
+  };
+
+  // Safe portrait resolver
+  const getSafeAvatarUrl = (p) => {
+    const isCarl = p.name?.includes('Carl') || p.name?.includes('Mac') || p.id?.includes('carl');
+    const isBo = p.name?.includes('Bo') || p.name?.includes('Travis') || p.id?.includes('bo');
+    const isDelbert = p.name?.includes('Delbert') || p.id?.includes('delbert');
+
+    if (isCarl || p.avatarUrl?.includes('1544717305-2782549b5136')) {
+      return 'https://images.unsplash.com/photo-1552058544-f2b08422138a?auto=format&fit=crop&w=800&q=80';
+    }
+    if (isBo) {
+      return 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=800&q=80';
+    }
+    if (isDelbert) {
+      return 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=800&q=80';
+    }
+    return p.avatarUrl || p.portraitUrl || 'https://images.unsplash.com/photo-1552058544-f2b08422138a?auto=format&fit=crop&w=800&q=80';
+  };
 
   return (
-    <div className="flex flex-col min-h-screen bg-slate-950 text-slate-100 font-sans">
+    <div className="min-h-screen bg-[#080B11] text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30">
       <Navbar />
-      <main className="flex-1 p-6 md:p-10 max-w-6xl mx-auto w-full">
-        {error && (
-          <div className="mb-6 p-4 bg-red-900/30 border-l-4 border-red-500 rounded-md flex items-center">
-            <AlertTriangle className="w-6 h-6 mr-3 text-red-400" />
-            <div>
-              <p className="font-semibold text-red-200">An error occurred:</p>
-              <p className="text-red-300 text-sm">{error}</p>
-            </div>
-          </div>
-        )}
 
-        {/* Hero Section */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        
+        {/* =========================================================================
+            1. MINIMAL COMMAND HEADER
+           ========================================================================= */}
+        <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800/60">
           <div>
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-950/80 border border-indigo-700/50 text-xs font-semibold text-indigo-300 mb-2">
-              <Flame className="w-3.5 h-3.5 text-amber-400" />
-              Contractor & Freelance Cold Calling Arena
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[11px] font-mono uppercase tracking-widest text-emerald-400 font-bold">
+                Mountain State Engine Active
+              </span>
             </div>
-            <h1 className="text-3xl md:text-4xl font-black tracking-tight bg-gradient-to-b from-white via-slate-100 to-slate-300 bg-clip-text text-transparent drop-shadow-[0_2px_12px_rgba(255,255,255,0.08)]">
-              Welcome back, {userName}!
+            <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
+              Good afternoon, {userName}
             </h1>
-            <p className="text-sm md:text-base text-slate-400 font-normal mt-1 leading-relaxed">
-              Select a battle-tested sales scenario to drill your pitch, handle tough objections, and close 50% deposits.
+            <p className="text-xs text-slate-400 mt-1">
+              Select a West Virginia contractor below or run an instant 60-second warmup drill.
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={() => navigate(ROUTES.COACH)}
-              className="py-2.5 px-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-xl text-sm font-bold shadow-lg transition flex items-center gap-2"
-            >
-              <span>🤖</span> Coach & Ring Dialer
-            </button>
-            <button
-              onClick={() => setIsGenerateModalOpen(true)}
-              className="py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-bold shadow-lg transition flex items-center gap-2"
-            >
-              <Zap className="w-4 h-4 text-amber-300" />
-              Generate with AI
-            </button>
-            <button
-              onClick={handleNewScript}
-              className="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-xl text-sm font-semibold transition flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              Script Builder
-            </button>
-          </div>
-        </div>
+          <button
+            type="button"
+            onClick={handleInstantWarmup}
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs transition flex items-center gap-2 shadow-lg shadow-amber-500/20 cursor-pointer active:scale-95 shrink-0 self-start sm:self-auto"
+          >
+            <Flame className="w-4 h-4 fill-slate-950" />
+            <span>Instant Warmup (60s)</span>
+          </button>
+        </header>
 
-        {/* 4 Core Offerings Practice Arenas */}
-        <div className="mb-10">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <span>🎯</span> Practice Your Core Offerings
-              </h2>
-              <p className="text-xs text-slate-400">
-                1-click to simulate realistic sales calls with live audio, voice AI & objection coaching
-              </p>
-            </div>
-          </div>
+        {/* =========================================================================
+            2. CLEAN 2-COLUMN COMMAND LAYOUT
+            Left Column: Compact Practice Launcher, Live Avatar Toggle, Workspace Links (4 cols)
+            Right Column: Seamless West Virginia Contractor Personas List (8 cols)
+           ========================================================================= */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          
+          {/* =========================================================================
+              LEFT COLUMN: COMMAND DOCK
+             ========================================================================= */}
+          <div className="lg:col-span-5 space-y-6">
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* 1. Contractor PaaS */}
-            <div className="bg-slate-900 border border-slate-800 hover:border-amber-500/50 rounded-2xl p-5 transition-all shadow-lg flex flex-col justify-between group">
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                    <Hammer className="w-5 h-5" />
-                  </div>
-                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-slate-800 text-amber-300 border border-amber-500/20">
-                    Contractor PaaS
-                  </span>
-                </div>
-                <h3 className="text-base font-bold text-white group-hover:text-amber-300 transition">
-                  Custom Contractor Management PaaS
-                </h3>
-                <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
-                  Pitch Hank Miller (Roofing & HVAC owner in truck). Overcome the "we already use paper or BuilderTrend" objection and close on 1-click change orders.
-                </p>
-                <div className="mt-3 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80 text-[11px] text-slate-300">
-                  <span className="font-semibold text-slate-400">Target Buyer: </span> Hank Miller (Gruff, in truck) • Medium/Hard
-                </div>
-              </div>
-
-              <div className="mt-4 pt-4 border-t border-slate-800 flex items-center justify-between">
-                <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> 6-Step Script Ready
+            {/* Compact Practice Call Studio Launcher */}
+            <div className="p-6 rounded-2xl bg-[#0d121c] border border-slate-800/80 shadow-xl space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-indigo-400 font-bold flex items-center gap-1.5">
+                  <Radio className="w-3.5 h-3.5" />
+                  Practice Call Studio
                 </span>
-                <button
-                  onClick={() => handleQuickLaunchScenario('script-contractor-paas', 'hank', 'medium')}
-                  className="py-2 px-4 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5"
-                >
-                  <Play className="w-3.5 h-3.5" /> Start Practice Call
-                </button>
+                <span className="text-[10px] text-slate-500">Live WebRTC Voice</span>
               </div>
-            </div>
 
-            {/* 2. 24/7 AI Receptionist */}
-            <div className="bg-slate-900 border border-slate-800 hover:border-blue-500/50 rounded-2xl p-5 transition-all shadow-lg flex flex-col justify-between group">
               <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="p-2.5 rounded-xl bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                    <Bot className="w-5 h-5" />
-                  </div>
-                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-slate-800 text-blue-300 border border-blue-500/20">
-                    AI Phone Agent
-                  </span>
-                </div>
-                <h3 className="text-base font-bold text-white group-hover:text-blue-300 transition">
-                  24/7 AI Receptionist & Emergency Triage
+                <span className="text-xs text-slate-400 block font-medium">Ready Target:</span>
+                <h3 className="text-base font-bold text-white mt-0.5">
+                  {activeProspect?.name || "Carl 'Mac' McIntyre"}
                 </h3>
-                <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
-                  Pitch Dave Kowalski (Master Plumber). Prove the AI sounds natural, captures emergency jobs when hands are dirty, and stops lost $3K calls.
+                <p className="text-xs text-indigo-300 font-medium">
+                  {activeProspect?.role || 'General Contractor'} • {activeProspect?.city || 'Kanawha County, WV'}
                 </p>
-                <div className="mt-3 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80 text-[11px] text-slate-300">
-                  <span className="font-semibold text-slate-400">Target Buyer: </span> Dave Kowalski (Under sink) • Medium/Hard
-                </div>
               </div>
 
-              <div className="mt-4 pt-4 border-t border-slate-800 flex items-center justify-between">
-                <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Live Demo Pitch Ready
-                </span>
-                <button
-                  onClick={() => handleQuickLaunchScenario('script-ai-receptionist', 'dave', 'medium')}
-                  className="py-2 px-4 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5"
-                >
-                  <Play className="w-3.5 h-3.5" /> Start Practice Call
-                </button>
-              </div>
-            </div>
-
-            {/* 3. Missed Call Text Back */}
-            <div className="bg-slate-900 border border-slate-800 hover:border-emerald-500/50 rounded-2xl p-5 transition-all shadow-lg flex flex-col justify-between group">
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                    <PhoneCall className="w-5 h-5" />
-                  </div>
-                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-slate-800 text-emerald-300 border border-emerald-500/20">
-                    Instant Lead Rescue
-                  </span>
-                </div>
-                <h3 className="text-base font-bold text-white group-hover:text-emerald-300 transition">
-                  Missed Call Text Back & Quote Rescue
-                </h3>
-                <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
-                  Pitch trade contractors on automatic 5-second SMS replies when they miss a call, preventing callers from hiring the next competitor on Google.
-                </p>
-                <div className="mt-3 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80 text-[11px] text-slate-300">
-                  <span className="font-semibold text-slate-400">Target Buyer: </span> Hank Miller or Dave Kowalski • Fast Close
-                </div>
-              </div>
-
-              <div className="mt-4 pt-4 border-t border-slate-800 flex items-center justify-between">
-                <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> ROI Hook Ready
-                </span>
-                <button
-                  onClick={() => handleQuickLaunchScenario('script-missed-call-text', 'hank', 'medium')}
-                  className="py-2 px-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5"
-                >
-                  <Play className="w-3.5 h-3.5" /> Start Practice Call
-                </button>
-              </div>
-            </div>
-
-            {/* 4. Freelance Dev (50% Deposit Close) */}
-            <div className="bg-slate-900 border border-slate-800 hover:border-purple-500/50 rounded-2xl p-5 transition-all shadow-lg flex flex-col justify-between group">
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="p-2.5 rounded-xl bg-purple-500/20 text-purple-400 border border-purple-500/30">
-                    <DollarSign className="w-5 h-5" />
-                  </div>
-                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-slate-800 text-purple-300 border border-purple-500/20">
-                    50% Deposit Closing
-                  </span>
-                </div>
-                <h3 className="text-base font-bold text-white group-hover:text-purple-300 transition">
-                  Custom Freelance Dev: Closing the 50% Deposit
-                </h3>
-                <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
-                  Pitch Julian Thorne. Handle the critical objection: "Why should I pay 50% upfront before you build anything? Can we do 100% on delivery?"
-                </p>
-                <div className="mt-3 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80 text-[11px] text-slate-300">
-                  <span className="font-semibold text-slate-400">Target Buyer: </span> Julian Thorne (Savvy negotiator) • Hard
-                </div>
-              </div>
-
-              <div className="mt-4 pt-4 border-t border-slate-800 flex items-center justify-between">
-                <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Milestone Script Ready
-                </span>
-                <button
-                  onClick={() => handleQuickLaunchScenario('script-freelance-deposit-close', 'julian', 'hard')}
-                  className="py-2 px-4 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5"
-                >
-                  <Play className="w-3.5 h-3.5" /> Start Practice Call
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Latest Script & Custom Settings */}
-        {latestScript && (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col md:flex-row items-center justify-between gap-6">
-            <div className="flex-1">
-              <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">
-                Current Active Script
-              </span>
-              <h3 className="text-lg font-bold text-white mt-1">
-                {latestScript.name}
-              </h3>
-              <p className="text-xs text-slate-400 mt-1">
-                {latestScript.metadata?.niche ? `Target: ${latestScript.metadata.niche} • ` : ''}
-                {latestScript.metadata?.pain ? `Pain: ${latestScript.metadata.pain}` : ''}
-              </p>
-            </div>
-
-            <div className="flex gap-3 w-full md:w-auto">
               <button
+                type="button"
                 onClick={() => {
-                  setScript(latestScript);
-                  navigate(ROUTES.SCRIPT_BUILDER);
+                  if (activeProspect) {
+                    handleSelectAndCall(activeProspect);
+                  } else {
+                    navigate('/practice');
+                  }
                 }}
-                className="flex-1 md:flex-none py-2.5 px-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-semibold text-slate-200 transition"
+                className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 cursor-pointer active:scale-95"
               >
-                Edit Script Flow
-              </button>
-              <button
-                onClick={handlePractice}
-                className="flex-1 md:flex-none py-2.5 px-6 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white rounded-xl text-xs font-bold shadow-lg transition flex items-center justify-center gap-2"
-              >
-                Custom Practice Setup <ArrowRight className="w-4 h-4" />
+                <PhoneCall className="w-4 h-4 fill-white" />
+                <span>Launch Practice Studio</span>
+                <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
+
+            {/* Live Avatar Cost-Toggle Indicator */}
+            <div className="p-4 rounded-2xl bg-[#0d121c] border border-slate-800/80 shadow-sm flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-bold ${
+                  isAvatarEnabled 
+                    ? 'bg-indigo-600/20 border border-indigo-500/30 text-indigo-300' 
+                    : 'bg-emerald-600/20 border border-emerald-500/30 text-emerald-300'
+                }`}>
+                  {isAvatarEnabled ? <Eye className="w-4 h-4" /> : <Cpu className="w-4 h-4" />}
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-white">
+                      {isAvatarEnabled ? 'Gemini Live + Avatar' : 'Live Voice Only'}
+                    </span>
+                    <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${
+                      isAvatarEnabled 
+                        ? 'bg-indigo-500/10 text-indigo-300 border border-indigo-500/20' 
+                        : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                    }`}>
+                      {isAvatarEnabled ? 'Full Video' : 'Low Cost'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    {isAvatarEnabled ? 'Procedural animated avatar active' : '0 visual tokens billed • Audio stream'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleToggleAvatar}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700 text-[10px] font-bold transition cursor-pointer shrink-0"
+              >
+                {isAvatarEnabled ? 'Save Costs' : 'Enable Avatar'}
+              </button>
+            </div>
+
+            {/* Clean Workspace Navigation Links */}
+            <div className="p-4 rounded-2xl bg-[#0d121c] border border-slate-800/80 shadow-sm space-y-1">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500 font-bold block px-2 pb-2">
+                Workspace Modules
+              </span>
+
+              <Link
+                to="/script-builder"
+                className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-800/60 transition group text-slate-300 hover:text-white"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-slate-800 flex items-center justify-center text-indigo-400 group-hover:scale-105 transition-transform">
+                    <FileText className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white leading-none">Script Builder</h4>
+                    <span className="text-[10px] text-slate-400">20-second hooks &amp; lethal rebuttals</span>
+                  </div>
+                </div>
+                <ChevronRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-white transition-colors" />
+              </Link>
+
+              <Link
+                to="/workshops"
+                className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-800/60 transition group text-slate-300 hover:text-white"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-slate-800 flex items-center justify-center text-amber-400 group-hover:scale-105 transition-transform">
+                    <Zap className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white leading-none">Cold Calling Workshops</h4>
+                    <span className="text-[10px] text-slate-400">4 focused rapid micro-drills</span>
+                  </div>
+                </div>
+                <ChevronRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-white transition-colors" />
+              </Link>
+
+              <Link
+                to="/recordings"
+                className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-800/60 transition group text-slate-300 hover:text-white"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-slate-800 flex items-center justify-center text-emerald-400 group-hover:scale-105 transition-transform">
+                    <BookmarkCheck className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white leading-none">Saved Recordings</h4>
+                    <span className="text-[10px] text-slate-400">Review practice history ({recordingsCount})</span>
+                  </div>
+                </div>
+                <ChevronRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-white transition-colors" />
+              </Link>
+
+              <Link
+                to="/settings"
+                className="flex items-center justify-between p-2.5 rounded-xl hover:bg-slate-800/60 transition group text-slate-300 hover:text-white"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-slate-800 flex items-center justify-center text-slate-400 group-hover:scale-105 transition-transform">
+                    <Settings className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white leading-none">Settings</h4>
+                    <span className="text-[10px] text-slate-400">Model keys &amp; voice persona preferences</span>
+                  </div>
+                </div>
+                <ChevronRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-white transition-colors" />
+              </Link>
+            </div>
+
           </div>
-        )}
+
+          {/* =========================================================================
+              RIGHT COLUMN: SEAMLESS WEST VIRGINIA CONTRACTOR PERSONAS
+             ========================================================================= */}
+          <div className="lg:col-span-7 space-y-4">
+            
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800/60">
+              <div>
+                <h2 className="text-xs uppercase font-mono font-bold tracking-widest text-slate-400">
+                  Contractor Personas ({prospects.length})
+                </h2>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Authentic Mountain State trade operators with real jobsite friction and resistance.
+                </p>
+              </div>
+
+              <Link
+                to="/script-builder"
+                className="text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold transition flex items-center gap-1"
+              >
+                <span>+ Custom Persona</span>
+                <ChevronRight className="w-3 h-3" />
+              </Link>
+            </div>
+
+            {/* Persona Rows List */}
+            <div className="space-y-3">
+              {prospects.map((p) => {
+                const avatar = getSafeAvatarUrl(p);
+                const company = p.companyName || p.company || 'West Virginia Contractor';
+                const location = p.city || p.location || 'Charleston, WV';
+                const tag = p.tag || 'In Truck Cab • Route 60';
+                const painText = p.bleedingNeckPain || p.painDescription || '';
+                const isSelected = activeProspect?.id === p.id;
+
+                return (
+                  <div
+                    key={p.id}
+                    className={`p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                      isSelected
+                        ? 'bg-[#0f1524] border-indigo-500/60 shadow-md ring-1 ring-indigo-500/30'
+                        : 'bg-[#0d121c] border-slate-800/80 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3.5 flex-1 min-w-0">
+                      {/* Avatar with subtle fade mask */}
+                      <div className="w-14 h-16 rounded-xl overflow-hidden bg-slate-900 border border-slate-800 shrink-0 relative">
+                        <img
+                          src={avatar}
+                          alt={p.name}
+                          className="w-full h-full object-cover object-top filter contrast-105"
+                          loading="eager"
+                        />
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                          <span className="text-[10px] font-bold px-2 py-0.2 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                            {tag}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-medium">
+                            • {location}
+                          </span>
+                        </div>
+
+                        <h3 className="text-sm font-bold text-white truncate">
+                          {p.name}
+                        </h3>
+
+                        <p className="text-xs text-indigo-300/90 font-medium truncate">
+                          {p.role} · <span className="text-slate-400">{company}</span>
+                        </p>
+
+                        {painText && (
+                          <p className="text-[11px] text-slate-400 line-clamp-1 mt-1 font-mono">
+                            {painText}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                      <button
+                        type="button"
+                        onClick={() => handleSelectAndCall(p)}
+                        className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md shadow-indigo-600/20 transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                      >
+                        <PhoneCall className="w-3.5 h-3.5 fill-white" />
+                        <span>Practice Call</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+          </div>
+
+        </div>
+
       </main>
 
-      {isGenerateModalOpen && (
-        <GenerateScriptModal
-          onClose={() => {
-            setIsGenerateModalOpen(false);
-            setGenerateError(null);
-          }}
-          onSubmit={handleGenerateSubmit}
-          isGenerating={isGenerating}
-          error={generateError}
-        />
-      )}
-
-      {isPracticeOptionsOpen && (
-        <PracticeOptionsModal 
-          onStart={handleStartPractice}
-          onClose={() => setIsPracticeOptionsOpen(false)}
-        />
-      )}
+      {/* IFRAME MICROPHONE PERMISSION / OPEN FULL WINDOW MODAL */}
+      <IframeMicModal 
+        isOpen={isIframeMicModalOpen} 
+        onClose={() => setIsIframeMicModalOpen(false)} 
+      />
     </div>
   );
 }
-
-DashboardPage.propTypes = {
-  setScript: PropTypes.func.isRequired,
-  setPracticeSettings: PropTypes.func.isRequired,
-};

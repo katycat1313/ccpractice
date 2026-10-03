@@ -101,11 +101,23 @@ export const useAIResponseOrchestrator = () => {
   }, [queuedResponse]);
 
   /**
+   * Stop orchestration loop
+   */
+  const stopOrchestration = useCallback(() => {
+    if (orchestrationLoopRef.current) {
+      clearInterval(orchestrationLoopRef.current);
+      orchestrationLoopRef.current = null;
+      logger.info('Orchestrator', 'Stopped orchestration loop');
+    }
+  }, []);
+
+  /**
    * Start orchestration loop that monitors speech patterns and generates responses
    */
   const startOrchestration = useCallback(
     (audioAnalyzer, conversationHistory, difficulty, onResponseReady) => {
       logger.info('Orchestrator', 'Starting orchestration loop');
+      stopOrchestration();
 
       const orchestrationLoop = setInterval(() => {
         if (!audioAnalyzer) return;
@@ -132,19 +144,8 @@ export const useAIResponseOrchestrator = () => {
       orchestrationLoopRef.current = orchestrationLoop;
       return orchestrationLoop;
     },
-    [generateProspectResponse]
+    [generateProspectResponse, stopOrchestration]
   );
-
-  /**
-   * Stop orchestration loop
-   */
-  const stopOrchestration = useCallback(() => {
-    if (orchestrationLoopRef.current) {
-      clearInterval(orchestrationLoopRef.current);
-      orchestrationLoopRef.current = null;
-      logger.info('Orchestrator', 'Stopped orchestration loop');
-    }
-  }, []);
 
   /**
    * Manually trigger response generation

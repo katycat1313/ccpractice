@@ -60,6 +60,16 @@ export function playTelephoneRing(durationSeconds = 1.8) {
       osc1.stop(now + durationSeconds);
       osc2.stop(now + durationSeconds);
 
+      osc1.onended = () => {
+        try {
+          osc1.disconnect();
+          osc2.disconnect();
+          gainNode.disconnect();
+        } catch (err) {
+          console.debug('Oscillator disconnect notice:', err);
+        }
+      };
+
       setTimeout(() => {
         resolve();
       }, durationSeconds * 1000);
@@ -92,6 +102,15 @@ export function playPickupClick() {
     osc.connect(gain);
     gain.connect(ctx.destination);
 
+    osc.onended = () => {
+      try {
+        osc.disconnect();
+        gain.disconnect();
+      } catch (err) {
+        console.debug('Pickup disconnect notice:', err);
+      }
+    };
+
     osc.start(now);
     osc.stop(now + 0.07);
   } catch (e) {
@@ -120,6 +139,15 @@ export function playHangupClick() {
 
     osc.connect(gain);
     gain.connect(ctx.destination);
+
+    osc.onended = () => {
+      try {
+        osc.disconnect();
+        gain.disconnect();
+      } catch (err) {
+        console.debug('Hangup disconnect notice:', err);
+      }
+    };
 
     osc.start(now);
     osc.stop(now + 0.09);

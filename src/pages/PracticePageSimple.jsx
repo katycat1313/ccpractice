@@ -75,10 +75,34 @@ export default function PracticePageSimple({
         setCallDuration((prev) => prev + 1);
       }, 1000);
     } else {
-      clearInterval(timerRef.current);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
     }
-    return () => clearInterval(timerRef.current);
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, [isCallActive]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopDeepgramAudio();
+      try {
+        window.speechSynthesis?.cancel();
+      } catch (_) {}
+      if (speechRecognitionRef.current) {
+        try {
+          speechRecognitionRef.current.stop();
+        } catch (_) {}
+        speechRecognitionRef.current = null;
+      }
+    };
+  }, []);
 
   // Format timer MM:SS
   const formatTime = (secs) => {

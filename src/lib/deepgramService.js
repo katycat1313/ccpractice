@@ -7,9 +7,47 @@
 export const DEEPGRAM_VOICES = {
   COACH_FEMALE: 'aura-asteria-en',   // Warm, sharp, professional coach
   COACH_MALE: 'aura-orion-en',       // Confident, direct closer
-  CONTRACTOR_MALE: 'aura-arcash-en', // Gruff, deep contractor / blue-collar voice
+  CONTRACTOR_MALE: 'aura-arcas-en', // Gruff, deep contractor / blue-collar voice
   CONTRACTOR_FEMALE: 'aura-luna-en'  // Direct trade business owner
 };
+
+/**
+ * Get active preferred Deepgram voice model
+ */
+export function getPreferredVoice() {
+  try {
+    const direct = localStorage.getItem('deepgram_preferred_voice');
+    if (direct && direct.trim()) return direct.trim();
+
+    const userObj = JSON.parse(localStorage.getItem('scriptmaster_user') || '{}');
+    if (userObj.preferred_voice && userObj.preferred_voice.trim()) {
+      return userObj.preferred_voice.trim();
+    }
+    if (userObj.preferredVoice && userObj.preferredVoice.trim()) {
+      return userObj.preferredVoice.trim();
+    }
+  } catch (e) {
+    console.debug('Error getting preferred voice:', e);
+  }
+  return DEEPGRAM_VOICES.COACH_FEMALE;
+}
+
+/**
+ * Persist active preferred Deepgram voice model
+ */
+export function setPreferredVoice(voice) {
+  if (!voice) return;
+  const clean = voice.trim();
+  localStorage.setItem('deepgram_preferred_voice', clean);
+  try {
+    const userObj = JSON.parse(localStorage.getItem('scriptmaster_user') || '{}');
+    userObj.preferred_voice = clean;
+    userObj.preferredVoice = clean;
+    localStorage.setItem('scriptmaster_user', JSON.stringify(userObj));
+  } catch (e) {
+    console.debug('Error caching preferred voice:', e);
+  }
+}
 
 /**
  * Get active Deepgram API key from user settings, localStorage, or environment
@@ -31,6 +69,109 @@ export function getDeepgramApiKey() {
   if (envKey && envKey.trim()) return envKey.trim();
 
   return '';
+}
+
+export const DEFAULT_DEEPGRAM_AGENT_ID = 'fd7da684-2c9c-433d-ab0c-1ed2f8b061e4';
+export const DEFAULT_DEEPGRAM_PROJECT_ID = '1add87dc-1582-4d89-9a7d-d2cee44bf542';
+
+/**
+ * Get active Deepgram Voice Agent ID
+ */
+export function getDeepgramAgentId() {
+  try {
+    const directAgentId = localStorage.getItem('deepgram_agent_id');
+    if (directAgentId && directAgentId.trim()) return directAgentId.trim();
+
+    const userObj = JSON.parse(localStorage.getItem('scriptmaster_user') || '{}');
+    if (userObj.deepgram_agent_id && userObj.deepgram_agent_id.trim()) {
+      return userObj.deepgram_agent_id.trim();
+    }
+  } catch (e) {
+    console.debug('Error getting local agent ID:', e);
+  }
+
+  const envAgent = import.meta.env.VITE_DEEPGRAM_AGENT_ID || import.meta.env.DEEPGRAM_AGENT_ID;
+  if (envAgent && envAgent.trim()) return envAgent.trim();
+
+  return DEFAULT_DEEPGRAM_AGENT_ID;
+}
+
+/**
+ * Persist Deepgram Agent ID
+ */
+export function setDeepgramAgentId(agentId) {
+  if (!agentId) return;
+  const cleanId = agentId.trim();
+  localStorage.setItem('deepgram_agent_id', cleanId);
+  try {
+    const userObj = JSON.parse(localStorage.getItem('scriptmaster_user') || '{}');
+    userObj.deepgram_agent_id = cleanId;
+    localStorage.setItem('scriptmaster_user', JSON.stringify(userObj));
+  } catch (e) {
+    console.debug('Error saving agent id to user profile:', e);
+  }
+}
+
+/**
+ * Get active Deepgram Project ID
+ */
+export function getDeepgramProjectId() {
+  try {
+    const directProj = localStorage.getItem('deepgram_project_id');
+    if (directProj && directProj.trim()) return directProj.trim();
+
+    const userObj = JSON.parse(localStorage.getItem('scriptmaster_user') || '{}');
+    if (userObj.deepgram_project_id && userObj.deepgram_project_id.trim()) {
+      return userObj.deepgram_project_id.trim();
+    }
+  } catch (e) {
+    console.debug('Error getting local project ID:', e);
+  }
+  return DEFAULT_DEEPGRAM_PROJECT_ID;
+}
+
+/**
+ * Persist Deepgram Project ID
+ */
+export function setDeepgramProjectId(projectId) {
+  if (!projectId) return;
+  const cleanId = projectId.trim();
+  localStorage.setItem('deepgram_project_id', cleanId);
+  try {
+    const userObj = JSON.parse(localStorage.getItem('scriptmaster_user') || '{}');
+    userObj.deepgram_project_id = cleanId;
+    localStorage.setItem('scriptmaster_user', JSON.stringify(userObj));
+  } catch (e) {
+    console.debug('Error saving project id to user profile:', e);
+  }
+}
+
+/**
+ * Fetch available voice agents from server / Deepgram API
+ */
+export async function fetchAvailableAgents(apiKey = '') {
+  try {
+    const headers = {};
+    if (apiKey) headers['Authorization'] = `Token ${apiKey}`;
+    const res = await fetch('/api/deepgram/agents', { headers });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Could not fetch agents:', err);
+  }
+  return {
+    success: true,
+    projectId: DEFAULT_DEEPGRAM_PROJECT_ID,
+    agents: [
+      {
+        agent_uuid: DEFAULT_DEEPGRAM_AGENT_ID,
+        title: 'ScriptMaster AI Sales Coach & Prospect Simulator',
+        projectId: DEFAULT_DEEPGRAM_PROJECT_ID
+      }
+    ],
+    recommendedAgentId: DEFAULT_DEEPGRAM_AGENT_ID
+  };
 }
 
 /**
@@ -191,3 +332,57 @@ export async function testDeepgramKey(keyToTest) {
     };
   }
 }
+
+/**
+ * Diagnostic: Test Deepgram Agent ID, fetch config, and play Agent greeting audio
+ */
+export async function testDeepgramAgent(agentId, projectId, apiKey) {
+  try {
+    const targetAgentId = agentId || getDeepgramAgentId();
+    const targetProjectId = projectId || getDeepgramProjectId();
+    const key = (apiKey || getDeepgramApiKey()).trim();
+
+    const headers = { 'Content-Type': 'application/json' };
+    if (key) headers['Authorization'] = `Token ${key}`;
+
+    const res = await fetch('/api/deepgram/agent/test', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        agentId: targetAgentId,
+        projectId: targetProjectId
+      })
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        error: data.error || `Failed to verify agent (HTTP ${res.status})`
+      };
+    }
+
+    if (data.audioBase64) {
+      stopDeepgramAudio();
+      const audio = new Audio(`data:${data.mimeType || 'audio/mp3'};base64,${data.audioBase64}`);
+      currentDeepgramAudio = audio;
+      await audio.play().catch(e => console.warn('Could not auto-play agent audio:', e));
+    }
+
+    return {
+      success: true,
+      agentTitle: data.agentTitle,
+      voiceModel: data.voiceModel,
+      listenModel: data.listenModel,
+      greeting: data.greeting,
+      latencyMs: data.latencyMs,
+      message: `Verified! "${data.agentTitle}" is active with ${data.voiceModel} (${data.latencyMs}ms)`
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err.message || 'Network error verifying Deepgram agent.'
+    };
+  }
+}
+

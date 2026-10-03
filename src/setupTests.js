@@ -1,7 +1,15 @@
 import '@testing-library/jest-dom';
+import { TextEncoder, TextDecoder } from 'util';
+import { jest } from '@jest/globals';
+
+global.jest = jest;
+global.TextEncoder = TextEncoder;
+global.TextDecoder = TextDecoder;
 
 // Mock navigator.mediaDevices
 Object.defineProperty(global.navigator, 'mediaDevices', {
+  writable: true,
+  configurable: true,
   value: {
     getUserMedia: jest.fn(() =>
       Promise.resolve({

@@ -69,11 +69,18 @@ export function extractMemoryFromInput(userText, currentMemory = null) {
   const lower = text.toLowerCase();
 
   // 1. Extract Name
-  // e.g. "I'm Katy", "My name is Katy", "Call me Katy", "I am Katy"
-  const nameMatch = text.match(/(?:my name is|i'm|i am|call me)\s+([A-Z][a-z]+|[a-z]+)/i);
+  // e.g. "My name is John", "I'm Katy", "Call me Alex"
+  const nameMatch = text.match(/(?:my name is|call me)\s+([A-Z][a-z]+|[a-z]+)/i) ||
+                    text.match(/(?:i'm|i am)\s+([A-Z][a-z]+)(?:\s+and|\s*,|\s*\.|\s*$)/i);
   if (nameMatch && nameMatch[1]) {
     const candidate = nameMatch[1].trim();
-    if (!['a', 'an', 'the', 'calling', 'selling', 'working', 'trying', 'here', 'just'].includes(candidate.toLowerCase())) {
+    const disallowedWords = [
+      'a', 'an', 'the', 'calling', 'selling', 'working', 'trying', 'here', 'just',
+      'in', 'doing', 'offering', 'pitching', 'reaching', 'with', 'from', 'at', 'on',
+      'ready', 'new', 'good', 'talking', 'looking', 'struggling', 'hoping',
+      'commercial', 'roofing', 'solar', 'software', 'contractor', 'plumber', 'electrician'
+    ];
+    if (!disallowedWords.includes(candidate.toLowerCase()) && candidate.length > 1) {
       memory.userName = candidate.charAt(0).toUpperCase() + candidate.slice(1).toLowerCase();
       
       // Also sync to scriptmaster_user
@@ -88,22 +95,50 @@ export function extractMemoryFromInput(userText, currentMemory = null) {
   }
 
   // 2. Extract Product or Service Sold
-  // e.g. "I sell dental marketing", "I sell commercial solar", "We offer SaaS for logistics", "My company does roofing"
-  const productMatch = text.match(/(?:i sell|we sell|i'm selling|we provide|we offer|my company does|i do|i work in)\s+([^.,;?!]+)/i);
+  // e.g. "I sell commercial roofing", "I am selling dental marketing", "We offer SaaS for logistics", "My company does roofing"
+  const productMatch = text.match(/(?:i sell|we sell|i'm selling|i am selling|what i sell is|what we sell is|we provide|i provide|we offer|i offer|my company does|our company does|i do|i work in|i'm in|i am in|we do|selling|my product is|our service is|i specialize in)\s+([^.,;?!]+)/i);
   if (productMatch && productMatch[1]) {
-    const prod = productMatch[1].trim().slice(0, 50);
+    const prod = productMatch[1].trim().slice(0, 60);
     if (prod.length > 2 && !prod.toLowerCase().startsWith('to ')) {
       memory.productOrService = prod;
+    }
+  } else {
+    // Keyword fallback for common sales industries
+    const industries = [
+      'commercial roofing', 'roofing maintenance', 'roofing', 'hvac', 'commercial solar',
+      'solar', 'plumbing', 'electrical', 'landscaping', 'saas', 'software',
+      'logistics', 'cybersecurity', 'consulting', 'digital marketing', 'marketing',
+      'recruiting', 'staffing', 'real estate', 'commercial insurance', 'insurance',
+      'merchant services', 'payment processing'
+    ];
+    for (const ind of industries) {
+      if (lower.includes(ind)) {
+        memory.productOrService = ind.charAt(0).toUpperCase() + ind.slice(1);
+        break;
+      }
     }
   }
 
   // 3. Extract Target Prospect
-  // e.g. "I sell to dentists", "calling factory owners", "targeting general contractors", "pitching homeowners"
-  const prospectMatch = text.match(/(?:sell to|selling to|calling|call|pitching|target|targeting|pitch to)\s+([^.,;?!]+)/i);
+  // e.g. "I sell to building owners", "calling factory owners", "targeting general contractors", "pitching homeowners"
+  const prospectMatch = text.match(/(?:sell to|selling to|calling on|calling|call|pitching to|pitching|pitch to|target|targeting|work with|deal with|focus on)\s+([^.,;?!]+)/i);
   if (prospectMatch && prospectMatch[1]) {
     const target = prospectMatch[1].trim().slice(0, 50);
     if (target.length > 2 && !['it', 'them', 'this', 'more'].includes(target.toLowerCase())) {
       memory.targetProspect = target;
+    }
+  } else {
+    // Target prospect keyword detection
+    const targets = [
+      'building owners', 'property managers', 'facility managers', 'facility directors',
+      'general contractors', 'homeowners', 'business owners', 'operations directors',
+      'dentists', 'doctors', 'c-level', 'executives'
+    ];
+    for (const t of targets) {
+      if (lower.includes(t)) {
+        memory.targetProspect = t.charAt(0).toUpperCase() + t.slice(1);
+        break;
+      }
     }
   }
 
@@ -195,7 +230,7 @@ export function generateMemoryAwareFallback({
   const lower = text.toLowerCase();
   const name = memory.userName || 'there';
   const product = memory.productOrService || 'your service';
-  const target = memory.targetProspect || currentProspect?.ownerName || 'the prospect';
+  const _target = memory.targetProspect || currentProspect?.ownerName || 'the prospect';
 
   // In-character prospect simulator during active call
   if (isCallActive || agentHat === 'prospect') {
@@ -215,62 +250,35 @@ export function generateMemoryAwareFallback({
     return `Look, I've got crews on the road and jobs backed up. What's the bottom line here?`;
   }
 
-  // Coach Hat - memory-aware coaching
-  const greetings = [
-    `Got it, ${name}!`,
-    `I hear you, ${name}.`,
-    `Great point, ${name}. Let's break that down.`
-  ];
-  const greeting = greetings[Math.floor(Math.random() * greetings.length)];
+  // Coach Hat - warm, conversational mentorship (holding two-way dialogue, NOT assuming user is pitching)
+  const mentionsProduct = memory.productOrService || lower.includes('sell') || lower.includes('roof') || lower.includes('hvac') || lower.includes('solar') || lower.includes('software') || lower.includes('service') || lower.includes('company');
 
-  // If user mentioned what they sell or an objection
-  if (lower.includes('sell') || lower.includes('calling') || lower.includes('work in')) {
-    return `${greeting} When you're selling **${product}** to **${target}**, your biggest trap is sounding like an unsolicited vendor reading a script. 
-    
-Here's how we execute the Pattern Interrupt:
-*"Hey, ${name} here. Give me 15 seconds before you step into your next meeting: if this isn't relevant to how you handle [biggest headache], tell me to hang up right now. Fair?"*
+  if (mentionsProduct) {
+    if (memory.targetProspect) {
+      return `Understood, ${name}. Targeting ${memory.targetProspect} with ${product} requires an instant pattern interrupt. Whenever you're ready to test your 30-second opening, hit "Start Practice Call" to practice with Hank Miller, or let me know what objection you'd like to work on!`;
+    }
+    return `Awesome, ${name}. Selling ${product} has huge potential, but it takes the right approach. Who do you usually pitch—are you calling owners, general contractors, or directors? And what is the biggest headache you hear from them?`;
+  }
 
-Notice that? It respects their time and disarms the reflex hang-up. Tap my avatar or the mic and try delivering that hook to me right now!`;
+  if (text.length > 15) {
+    return `Got it, ${name}. That's really helpful context for us to build on. As your mentor, I want to make sure we lock in your target and message before we do live reps. Tell me more about who you call on, or whenever you're ready, let me know and we'll start our practice pitch!`;
+  }
+
+  if (!memory.productOrService && (lower.includes('hi') || lower.includes('hello') || lower.includes('hey') || text.length < 15)) {
+    return `Hey ${name}! Good to connect with you. Before we run any practice calls, let's talk for a minute so I understand your world. What product or service are you selling, and who is your ideal customer?`;
   }
 
   if (lower.includes('busy') || lower.includes('too busy') || lower.includes('no time')) {
-    return `${greeting} When prospects tell you *"I'm too busy"*, they're not actually busy—it's an automatic defense shield to get off the phone. 
-
-Never apologize or say "Sorry to bother you." Instead, agree and flip the clock:
-*"I know you're slammed running your business—that's exactly why I called. Give me 20 seconds right now, and if this isn't worth your time, I'll never call you again."*
-
-Tap my avatar to drill that objection with me right now!`;
+    return `Man, I hear you, ${name}. When prospects say "I'm busy", it's almost always an automatic reflex to get off the phone. When we practice our call, we'll use a 15-second pattern interrupt to disarm that right out of the gate. Are you ready to test that in a quick practice call, or do you want to talk through the script first?`;
   }
 
   if (lower.includes('email') || lower.includes('send an email')) {
-    return `${greeting} *"Just send me an email"* is the #1 brush-off in sales. If you say "Sure, what's your email?", your pitch is dead in their spam folder.
-
-Instead, pivot with honesty:
-*"I could send an email, but your inbox gets 50 vendor pitches a day and it'll get lost. Give me 30 seconds: if you hate what I say, you can hang up on me. Deal?"*
-
-Tap my avatar to speak that line out loud!`;
+    return `Totally get it, ${name}. The classic "just send an email" brush-off kills so many deals. The secret is acknowledging that their inbox is slammed, and asking for just 20 seconds. Whenever you're ready, we can run a baseline drill to see how you naturally handle that!`;
   }
 
-  if (lower.includes('budget') || lower.includes('money') || lower.includes('expensive')) {
-    return `${greeting} On *"no budget"*, remember: businesses always find budget for bleeding neck pain that stops lost revenue.
-
-Counter with value contrast:
-*"I don't expect you to have budget for something you didn't plan for today. But if this saves you $3,000 every month on lost field orders, when would make sense to look at it?"*
-
-Tap my avatar and practice that tone!`;
+  if (lower.includes('ready') || lower.includes('practice') || lower.includes('baseline') || lower.includes('pitch') || lower.includes('start')) {
+    return `Love the energy, ${name}! Let's establish your baseline score. Hit the "Start Practice Call / Baseline Pitch" button below whenever you're ready. I'll pick up the phone as your prospect, and you deliver your natural 30-second opening. Let's do this!`;
   }
 
-  if (lower.includes('deposit') || lower.includes('50%')) {
-    return `${greeting} Closing the **50% deposit** requires the Milestone Escrow principle:
-*"We split it 50/50: the 50% deposit reserves our dedicated sprint, and we tie the second half to you approving Milestone 1. You inspect the work before releasing the rest."*
-
-This completely eliminates their risk while protecting your cash flow.`;
-  }
-
-  // General coaching acknowledging user's input
-  return `${greeting} I've noted that: *"${text}"*. 
-
-Remember the core rule: **People bond over similarities** (like recommending a favorite TV show to a friend). When you cold call, match their pace, use their industry vocabulary without being overly technical, and focus entirely on solving their immediate friction.
-
-Tap my avatar to speak your pitch or objection right to me!`;
+  return `Got it, ${name}. That's really helpful context for us to build on. As your mentor, I want to make sure we lock in your target and message before we do live reps. Tell me more about what you want to achieve today, or whenever you're ready, let me know and we'll start our practice pitch!`;
 }

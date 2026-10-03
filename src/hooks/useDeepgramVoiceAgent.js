@@ -102,7 +102,7 @@ export const useDeepgramVoiceAgent = () => {
         
         const setup = {
           setup: {
-            model: 'models/gemini-2.5-flash-native-audio-preview-09-2025',
+            model: 'models/gemini-3.8-live',
             generation_config: {
               response_modalities: ['AUDIO'],
               speech_config: { voice_config: { prebuilt_voice_config: { voice_name: 'Puck' } } }
@@ -140,13 +140,9 @@ export const useDeepgramVoiceAgent = () => {
         if (message.setupComplete) {
           console.log('[Gemini] Setup complete - starting audio capture');
           const source = audioContext.createMediaStreamSource(stream);
-          const processor = audioContext.createScriptProcessor(4096, 1, 1);
-          source.connect(processor);
-          processor.connect(audioContext.destination);
-          
-          processor.onaudioprocess = (e) => {
+
+          const sendPCMFromFloat32 = (inputData) => {
             if (ws.readyState === WebSocket.OPEN) {
-              const inputData = e.inputBuffer.getChannelData(0);
               const pcmData = new Int16Array(inputData.length);
               for (let i = 0; i < inputData.length; i++) {
                 const s = Math.max(-1, Math.min(1, inputData[i]));
@@ -156,7 +152,65 @@ export const useDeepgramVoiceAgent = () => {
               ws.send(JSON.stringify({ realtime_input: { media_chunks: [{ mime_type: 'audio/pcm', data: base64Audio }] } }));
             }
           };
-          mediaRecorderRef.current = processor;
+
+          const attachCapture = async () => {
+            if (audioContext.audioWorklet && typeof AudioWorkletNode !== 'undefined') {
+              try {
+                const workletCode = `
+class GeminiVoiceAgentProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.bufferSize = 2048;
+    this.buffer = new Float32Array(this.bufferSize);
+    this.bytesWritten = 0;
+  }
+  process(inputs) {
+    const input = inputs[0];
+    if (input && input[0]) {
+      const channel = input[0];
+      for (let i = 0; i < channel.length; i++) {
+        this.buffer[this.bytesWritten++] = channel[i];
+        if (this.bytesWritten >= this.bufferSize) {
+          this.port.postMessage(this.buffer.slice(0, this.bufferSize));
+          this.bytesWritten = 0;
+        }
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('gemini-voice-agent-processor', GeminiVoiceAgentProcessor);
+`;
+                const blob = new Blob([workletCode], { type: 'application/javascript' });
+                const url = URL.createObjectURL(blob);
+                await audioContext.audioWorklet.addModule(url);
+                URL.revokeObjectURL(url);
+
+                const workletNode = new AudioWorkletNode(audioContext, 'gemini-voice-agent-processor');
+                workletNode.port.onmessage = (e) => {
+                  if (e.data) sendPCMFromFloat32(e.data);
+                };
+                source.connect(workletNode);
+                workletNode.connect(audioContext.destination);
+                mediaRecorderRef.current = workletNode;
+                return;
+              } catch (e) {
+                console.warn('AudioWorklet fallback in useDeepgramVoiceAgent:', e);
+              }
+            }
+
+            if (audioContext.createScriptProcessor) {
+              const processor = audioContext.createScriptProcessor(4096, 1, 1);
+              source.connect(processor);
+              processor.connect(audioContext.destination);
+              processor.onaudioprocess = (e) => {
+                sendPCMFromFloat32(e.inputBuffer.getChannelData(0));
+              };
+              mediaRecorderRef.current = processor;
+            }
+          };
+
+          attachCapture();
         } else if (message.serverContent?.modelTurn) {
           const parts = message.serverContent.modelTurn.parts || [];
           for (const part of parts) {
