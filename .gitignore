@@ -26,4 +26,6 @@ dist-ssr
 *.sw?
 
 .env
+.mcp.json
+public/test_gemini.html
 .vite/
