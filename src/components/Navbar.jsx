@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Settings, LogOut, PhoneCall, FileText, Mic, User, ExternalLink, Sparkles, LayoutDashboard } from 'lucide-react';
+import { Settings, LogOut, PhoneCall, FileText, Mic, User, ExternalLink, Sparkles, LayoutDashboard, BriefcaseBusiness } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import IframeMicModal from './IframeMicModal';
@@ -56,6 +56,12 @@ export default function Navbar() {
       label: 'Practice Studio',
       icon: PhoneCall,
       active: currentPath === '/coach' || currentPath === '/practice'
+    },
+    {
+      to: '/interview-prep',
+      label: 'Interview Prep',
+      icon: BriefcaseBusiness,
+      active: currentPath === '/interview-prep'
     },
     {
       to: '/recordings',

@@ -61,6 +61,7 @@ export const ROUTES = {
   SAVED_SCRIPTS: '/saved-scripts',
   COACH: '/coach',
   SETTINGS: '/settings',
+  INTERVIEW_PREP: '/interview-prep',
 };
 
 export const PUBLIC_ROUTES = [

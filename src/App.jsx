@@ -19,6 +19,7 @@ import ProgressPage from './pages/ProgressPage';
 import RebuttalsPage from './pages/RebuttalsPage';
 import RecordingsPage from './pages/RecordingsPage';
 import WorkshopsPage from './pages/WorkshopsPage';
+import InterviewPrepPage from './pages/InterviewPrepPage';
 
 const getInitialSession = () => {
   if (typeof window === 'undefined') return null;
@@ -165,6 +166,7 @@ export default function App() {
           <Route path="/rebuttals" element={<RebuttalsPage />} />
           <Route path="/workshops" element={<WorkshopsPage />} />
           <Route path="/workshop" element={<WorkshopsPage />} />
+          <Route path={ROUTES.INTERVIEW_PREP} element={<InterviewPrepPage />} />
           <Route path={ROUTES.SETTINGS} element={<SettingsPage />} />
           <Route path="*" element={<DashboardPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
         </>
