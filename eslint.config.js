@@ -34,7 +34,7 @@ export default [
   pluginJs.configs.recommended,
   ...fixupConfigRules(pluginReactConfig),
   {
-    files: ['src/__tests__/**', 'src/setupTests.js'],
+    files: ['src/__tests__/**', 'src/__mocks__/**', 'src/setupTests.js'],
     languageOptions: {
       globals: {
         ...globals.browser,

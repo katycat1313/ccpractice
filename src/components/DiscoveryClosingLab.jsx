@@ -40,6 +40,8 @@ import { getGeminiApiKey, askGeminiCoach, getGeminiTTSAudio } from '../lib/gemin
 import { GeminiLiveSession } from '../lib/geminiLiveClient';
 import { playPickupClick, playHangupClick } from '../lib/soundUtils';
 import IframeMicModal from './IframeMicModal';
+import PracticeTeleprompter from './PracticeTeleprompter';
+import { getActiveScript } from '../lib/coachActions';
 
 const STORAGE_KEY_DNA = 'scriptmaster_discovery_lab_dna';
 
@@ -178,6 +180,7 @@ export default function DiscoveryClosingLab() {
   const [isLiveAudioConnected, setIsLiveAudioConnected] = useState(false);
   const [liveAudioStatus, setLiveAudioStatus] = useState('disconnected');
   const [isIframeMicModalOpen, setIsIframeMicModalOpen] = useState(false);
+  const [showTeleprompterSparring, setShowTeleprompterSparring] = useState(false);
 
   const sparringBottomRef = useRef(null);
   const liveSessionRef = useRef(null);
@@ -1166,7 +1169,7 @@ OUTPUT STRICTLY AS JSON:
                       ? 'bg-amber-600/30 border-amber-500 text-amber-300 animate-pulse'
                       : 'bg-indigo-950/60 hover:bg-indigo-900 border-indigo-500/40 text-indigo-300 hover:text-white'
                   }`}
-                  title="Toggle bidirectional live audio with Marcus roleplaying the contractor (gemini-3.8-live)"
+                  title="Toggle bidirectional live audio with Coach roleplaying the contractor (gemini-3.8-live)"
                 >
                   <Radio className={`w-3.5 h-3.5 ${isLiveAudioConnected ? 'text-white' : 'text-indigo-400'}`} />
                   <span>
@@ -1174,8 +1177,23 @@ OUTPUT STRICTLY AS JSON:
                       ? 'Live Voice Active' 
                       : liveAudioStatus === 'connecting'
                       ? 'Connecting Voice...'
-                      : 'Gemini-3.8-Live Voice'}
+                      : 'Gemini-2.0-Live Voice'}
                   </span>
+                </button>
+
+                {/* Teleprompter Toggle */}
+                <button
+                  type="button"
+                  onClick={() => setShowTeleprompterSparring(prev => !prev)}
+                  className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm ${
+                    showTeleprompterSparring
+                      ? 'bg-indigo-600 text-white border-indigo-500 shadow-md'
+                      : 'bg-slate-800 hover:bg-slate-750 text-slate-300 border-slate-700'
+                  }`}
+                  title="Toggle live script teleprompter"
+                >
+                  <FileText className="w-3.5 h-3.5 text-indigo-300" />
+                  <span>Teleprompter</span>
                 </button>
 
                 <button
@@ -1189,8 +1207,21 @@ OUTPUT STRICTLY AS JSON:
               </div>
             </div>
 
-            {/* Sparring Messages Stream */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-4 max-h-[500px] text-xs">
+            {/* Modal Body with optional Teleprompter split */}
+            <div className="flex-1 flex overflow-hidden max-h-[500px]">
+              {showTeleprompterSparring && (
+                <div className="w-full md:w-5/12 border-r border-slate-800 p-3 h-full overflow-hidden shrink-0 animate-fadeIn">
+                  <PracticeTeleprompter
+                    onInsertText={(text) => {
+                      setSparringInput(prev => prev ? `${prev} ${text}` : text);
+                    }}
+                    className="h-full"
+                  />
+                </div>
+              )}
+
+              {/* Sparring Messages Stream */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-4 text-xs">
               {sparringMessages.map((m) => {
                 const isUser = m.sender === 'user';
                 return (
@@ -1256,6 +1287,7 @@ OUTPUT STRICTLY AS JSON:
 
               <div ref={sparringBottomRef} />
             </div>
+          </div>
 
             {/* Sparring Input Footer */}
             <form onSubmit={handleSendSparringMessage} className="p-4 bg-slate-900 border-t border-slate-800 space-y-2">
@@ -1295,7 +1327,7 @@ OUTPUT STRICTLY AS JSON:
 
               <div className="flex items-center justify-between text-[11px] text-slate-500 px-1">
                 <span>Talk Ratio Target: <strong>43% You / 57% Contractor</strong></span>
-                <span>Powered by gemini-3.8-flash &amp; gemini-3.8-live</span>
+                <span>Powered by Gemini 3.8 Live</span>
               </div>
             </form>
 

@@ -9,6 +9,7 @@ const STORAGE_KEY = 'scriptmaster_user_memory';
 export const defaultMemory = {
   userName: '',
   productOrService: '',
+  offerOptions: [],
   targetProspect: '',
   coreWeaknesses: [],
   goals: [],
@@ -119,6 +120,13 @@ export function extractMemoryFromInput(userText, currentMemory = null) {
     }
   }
 
+  // Preserve product/package options so the Coach can reuse them later.
+  const optionsMatch = text.match(/(?:options?|offerings?|packages?|services?)\s*(?:are|include|:)?\s+([^.!?]+)/i);
+  if (optionsMatch && optionsMatch[1]) {
+    const options = optionsMatch[1].split(/,|\bor\b|\band\b/i).map(item => item.trim()).filter(item => item.length > 1).slice(0, 8);
+    memory.offerOptions = Array.from(new Set([...(memory.offerOptions || []), ...options])).slice(-8);
+  }
+
   // 3. Extract Target Prospect
   // e.g. "I sell to building owners", "calling factory owners", "targeting general contractors", "pitching homeowners"
   const prospectMatch = text.match(/(?:sell to|selling to|calling on|calling|call|pitching to|pitching|pitch to|target|targeting|work with|deal with|focus on)\s+([^.,;?!]+)/i);
@@ -202,6 +210,7 @@ export function formatMemoryForPrompt(memory) {
   const parts = [];
   if (memory.userName) parts.push(`User's Name: ${memory.userName}`);
   if (memory.productOrService) parts.push(`User Sells: ${memory.productOrService}`);
+  if (memory.offerOptions && memory.offerOptions.length > 0) parts.push(`Available Offer Options: ${memory.offerOptions.join(', ')}`);
   if (memory.targetProspect) parts.push(`Target Prospect: ${memory.targetProspect}`);
   if (memory.objectionsToMaster && memory.objectionsToMaster.length > 0) {
     parts.push(`Known Objections User Struggles With: ${memory.objectionsToMaster.join(', ')}`);

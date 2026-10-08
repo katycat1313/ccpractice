@@ -20,6 +20,26 @@ import RebuttalsPage from './pages/RebuttalsPage';
 import RecordingsPage from './pages/RecordingsPage';
 import WorkshopsPage from './pages/WorkshopsPage';
 
+const getInitialSession = () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    let localUser = JSON.parse(localStorage.getItem('scriptmaster_user') || 'null');
+    if (!localUser) {
+      localUser = {
+        id: `usr-${Date.now()}`,
+        name: 'Sales Rep',
+        email: 'closer@scriptmaster.app',
+        role: 'Sales Representative',
+        created_at: new Date().toISOString()
+      };
+      localStorage.setItem('scriptmaster_user', JSON.stringify(localUser));
+    }
+    return { user: localUser };
+  } catch {
+    return null;
+  }
+};
+
 const handleAuthNavigation = (session, currentPath, navigate) => {
   const isPublicRoute = PUBLIC_ROUTES.includes(currentPath);
   if (session && isPublicRoute) {
@@ -33,7 +53,8 @@ export default function App() {
   const [script, setScript] = useState(null);
   const [transcript, setTranscript] = useState(null);
   const [feedback, setFeedback] = useState(null);
-  const [session, setSession] = useState(null);
+  const [session, setSession] = useState(() => getInitialSession());
+  const [isCoachOpen, setIsCoachOpen] = useState(true);
   
   // NEW: Practice session state
   const [practiceSettings, setPracticeSettings] = useState({
@@ -104,7 +125,21 @@ export default function App() {
     };
   }, [navigate, location.pathname]);
 
+  // Coach starts open on the Dashboard, then follows the user as a compact
+  // bubble when they navigate into another learning area.
+  useEffect(() => {
+    const isDashboard = location.pathname === '/' || location.pathname === ROUTES.DASHBOARD || location.pathname === '/overview';
+    setIsCoachOpen(isDashboard);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    const openCoach = () => setIsCoachOpen(true);
+    window.addEventListener('scriptmaster_open_coach', openCoach);
+    return () => window.removeEventListener('scriptmaster_open_coach', openCoach);
+  }, []);
+
   return (
+    <>
     <Routes>
       {!session ? (
         <>
@@ -115,6 +150,7 @@ export default function App() {
         </>
       ) : (
         <>
+          {/* Dashboard is the home screen, with Coach guiding the next step. */}
           <Route path="/" element={<DashboardPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
           <Route path={ROUTES.DASHBOARD} element={<DashboardPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
           <Route path="/overview" element={<DashboardPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
@@ -130,9 +166,38 @@ export default function App() {
           <Route path="/workshops" element={<WorkshopsPage />} />
           <Route path="/workshop" element={<WorkshopsPage />} />
           <Route path={ROUTES.SETTINGS} element={<SettingsPage />} />
-          <Route path="*" element={<CoachPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
+          <Route path="*" element={<DashboardPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
         </>
       )}
     </Routes>
+    {session && (
+      <>
+        {!isCoachOpen && location.pathname !== ROUTES.COACH && (
+          <button
+            type="button"
+            onClick={() => setIsCoachOpen(true)}
+            className="fixed bottom-5 right-5 z-[90] rounded-full bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-3 shadow-2xl shadow-indigo-900/40 border border-indigo-400/40 font-bold text-sm transition"
+            aria-label="Open Coach"
+          >
+            Coach
+          </button>
+        )}
+        {location.pathname !== ROUTES.COACH && (
+          <div className={`${isCoachOpen ? 'fixed' : 'hidden'} inset-y-0 right-0 z-[85] w-full sm:w-[min(720px,92vw)] bg-slate-950/95 border-l border-indigo-500/40 shadow-2xl`}>
+            <div className="relative h-full overflow-y-auto">
+              <button
+                type="button"
+                onClick={() => setIsCoachOpen(false)}
+                className="absolute right-4 top-4 z-10 px-3 py-2 rounded-xl bg-slate-800 text-white text-xs font-bold hover:bg-slate-700"
+              >
+                Close Coach
+              </button>
+              <CoachPage setScript={setScript} embedded active={isCoachOpen} />
+            </div>
+          </div>
+        )}
+      </>
+    )}
+    </>
   );
 }

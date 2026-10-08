@@ -50,6 +50,7 @@ export default function SettingsPage() {
   // Profile & Background
   const [profile, setProfile] = useState({
     name: 'Sales Rep',
+    coachName: 'Coach',
     role: 'Commercial Closer',
     workBackground: '',
     whatISell: '',
@@ -99,6 +100,7 @@ export default function SettingsPage() {
     const memory = getCoachMemory();
     setProfile({
       name: localUser.name || memory.userName || 'Sales Rep',
+      coachName: localUser.coachName || 'Coach',
       role: localUser.role || 'Sales Closer',
       workBackground: localUser.workBackground || '5 years B2B contractor and commercial sales',
       whatISell: localUser.whatISell || memory.productOrService || 'Commercial Roofing Maintenance Agreements',
@@ -325,6 +327,18 @@ export default function SettingsPage() {
                   className="w-full bg-slate-50 border border-slate-200/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-400"
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-500 mb-1">Coach Name</label>
+              <input
+                type="text"
+                value={profile.coachName}
+                onChange={(e) => setProfile({ ...profile, coachName: e.target.value })}
+                placeholder="Coach"
+                className="w-full bg-slate-50 border border-slate-200/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-400"
+              />
+              <p className="text-[10px] text-slate-400 mt-1">Use “Coach” now, or give the coach a custom name later.</p>
             </div>
 
             <div>

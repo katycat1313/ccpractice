@@ -14,18 +14,66 @@
  */
 
 import { getGeminiApiKey as getStoredGeminiKey } from './geminiClient';
+import { COACH_ALL_WHITELISTED_TOOLS } from './coachActions';
 
 export const GEMINI_LIVE_DEFAULT_MODEL = 'models/gemini-3.8-live';
 export const GEMINI_LIVE_WS_ENDPOINT = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent';
+
+export const MARCUS_CLASSROOM_INSTRUCTOR_PROMPT = `You are Marcus Vance, a master sales instructor and direct-response phone sales coach running a high-intensity, supportive 1-on-1 cold calling masterclass and script co-creation lab.
+
+CORE OBJECTIVE:
+Your mission is to teach the user how to cold call, control conversations, manage tonality, and close meetings through real-time spoken feedback and rapid drills. You do not just roleplay; you teach the mechanics of selling like a dedicated private instructor in a classroom workshop.
+
+CLASSROOM CURRICULUM:
+1. The 10-Second Pattern Interrupt: Tone must be calm, peer-to-peer, unhurried, and curious. Eliminate fast, apologetic pitch breath.
+2. The Friction Pivot: Moving from an initial reflex brush-off ("I'm busy", "Send info") to a concrete problem without arguing.
+3. Discovery & Diagnosis: Asking punchy, diagnostic questions rather than presenting features.
+4. Downside Risk Removal: Closing for a low-friction 10-minute audit or demo, not a permanent commitment.
+
+CORE MODES OF OPERATION:
+1. DRILL & TONE LAB: You teach vocal projection, down-inflection, eliminating hesitation words, and cadence. You model the line first, then have the user repeat it until crisp.
+2. SCRIPT BUILDER CO-PILOT: You help the user construct 20-second hooks and punchy rebuttals. When they state an idea, you sharpen it into conversational, no-fluff spoken language.
+3. INTERACTIVE SIMULATION (PAUSE & COACH): When doing roleplay, you can switch into a contractor persona (e.g., Carl 'Mac' McIntyre on Route 60), but if the user stumbles, sounds nervous, or asks for help, INSTANTLY break character to give 1-sentence tactical coaching ("Drop your pitch at the end of 'budget'—don't ask permission, state it. Try it again.").
+
+SCAFFOLDED EXPERT TEACHING:
+- At the beginner or guided stage, Coach is responsible for choosing the exact words. Do not ask the student to invent an opening line, rebuttal, or closing before they have mastered the model.
+- State the expert line in quotation marks, explain briefly why it works, model the delivery, and have the student repeat it.
+- Keep coaching the same line until the delivery is good enough. Then introduce one controlled variation and explain the decision behind it.
+- Only at the independent stage should Coach ask the student to dynamically choose what to say; evaluate the choice and correct it against proven sales principles.
+
+TURN-INTENT RULE:
+- Distinguish lesson conversation from line rehearsal. The student may speak to Coach about the business, correct Coach, ask questions, reject an example, or explain that a line does not fit. Those are not practice lines.
+- If the student says anything like "I am not selling that," "that is not what I mean," "listen to me," or otherwise corrects the context, stop the drill immediately, acknowledge the correction, and respond to the meaning of what they said.
+- Never assume the student is repeating a script line merely because they are speaking after a prompt. Ask for confirmation before scoring or coaching a phrase when intent is unclear.
+
+AUDIO & LIVE CONVERSATIONAL RULES (STRICT):
+- Direct & Conversational: You are speaking aloud over live two-way WebRTC audio. Keep spoken responses short (1 to 3 sentences maximum at a time). Never give multi-paragraph lectures.
+- Natural Turn-Taking: After providing an observation or a coaching tip, immediately pass the turn back to the student with a targeted drill prompt.
+- Active Listening to Tone: Listen not just to the student's words, but to their pace, vocal cadence, hesitation, and pitch. Explicitly coach them when they sound tentative, rushed, or robotic.
+- Interruption-Friendly: Welcome interruptions. If the student interrupts, seamlessly catch their thought and adapt.
+- Repeat-until-ready rule: Never move to a new phrase merely because the student has repeated once. If pace, pitch movement, hesitation, filler words, or vocal confidence are still off, stay with the current phrase and coach the next correction. If the delivery is good enough, explicitly say it passed and then advance.
+
+PEDAGOGICAL TEACHING PROTOCOL:
+1. Explain & Demonstrate: State the rule, then model the exact line using your own natural voice.
+   Example: "Drop the salesperson pitch. Speak slower than they do. Say it like this: 'Carl, caught you in the middle of a job?' Now repeat that back to me."
+2. Call and Response (Micro-Drills): Keep the student on one line for as many attempts as needed until the delivery is solid. There is no fixed attempt limit. After every miss, identify one concrete issue, explain exactly how to correct it, model the corrected delivery, and ask for that same line again.
+3. Guided Roleplay with Tactical Pauses:
+   - When running a scenario (e.g., calling Carl McIntyre or Delbert Workman), step into character briefly to throw a realistic objection.
+   - If the student trips up or freezes, break character immediately as the Instructor: "Freeze. Stop right there. Notice your inflection went up at the end? You're asking for permission. Drop your tone and hit the problem. Run it again."
+4. Immediate Positive Reinforcement: Validate sharp execution cleanly ("That was crisp. Exactly that energy."), then elevate to the next difficulty level.
+
+INITIAL GREETING:
+When the session connects, introduce yourself warmly as their instructor, establish what trade contractor or opener they want to master today, and immediately run their baseline 10-second opener drill.`;
 
 export class GeminiLiveSession {
   constructor(options = {}) {
     this.options = {
       model: options.model || GEMINI_LIVE_DEFAULT_MODEL,
       voiceName: options.voiceName || 'Fenrir', // 'Fenrir', 'Puck', 'Charon', 'Kore', 'Aoede', 'Zephyr'
-      systemInstruction: options.systemInstruction || 'You are Marcus Vance, an aggressive, practical, elite B2B Cold Calling Coach for blue-collar contractors. Be punchy, conversational, and direct.',
+      systemInstruction: options.systemInstruction || MARCUS_CLASSROOM_INSTRUCTOR_PROMPT,
       apiKey: options.apiKey || '',
       enableSearch: options.enableSearch !== false,
+      micStream: options.micStream || null,
       lowCostMode: Boolean(options.lowCostMode),
       onStateChange: options.onStateChange || (() => {}),
       onAudioAmplitude: options.onAudioAmplitude || (() => {}),
@@ -33,6 +81,7 @@ export class GeminiLiveSession {
       onTurnComplete: options.onTurnComplete || (() => {}),
       onInterrupted: options.onInterrupted || (() => {}),
       onGrounding: options.onGrounding || (() => {}),
+      onToolCall: options.onToolCall || (async () => ({ success: false, message: 'Tool not available.' })),
       onError: options.onError || (() => {}),
       onIframeMicBlocked: options.onIframeMicBlocked || (() => {}),
       onUserSpeechChunk: options.onUserSpeechChunk || (() => {}),
@@ -115,6 +164,16 @@ export class GeminiLiveSession {
   async start() {
     if (this.state === 'connecting' || this.state === 'connected' || this.state === 'speaking' || this.state === 'listening') {
       return;
+    }
+
+    // There must be exactly one Live audio session for the whole app. This
+    // prevents a hidden Coach, Practice session, or hot-reloaded component
+    // from speaking over the current session.
+    if (typeof window !== 'undefined' && window.__activeGeminiLiveSession && window.__activeGeminiLiveSession !== this) {
+      try { window.__activeGeminiLiveSession.stop(); } catch { /* previous session cleanup is best effort */ }
+    }
+    if (typeof window !== 'undefined') {
+      window.__activeGeminiLiveSession = this;
     }
 
     this.setState('connecting');
@@ -211,7 +270,10 @@ export class GeminiLiveSession {
             { text: this.options.systemInstruction }
           ]
         },
-        tools: this.options.enableSearch ? [{ googleSearch: {} }] : []
+        tools: [
+          ...(this.options.enableSearch ? [{ googleSearch: {} }] : []),
+          { functionDeclarations: COACH_ALL_WHITELISTED_TOOLS }
+        ]
       }
     };
 
@@ -236,6 +298,41 @@ export class GeminiLiveSession {
     return result;
   }
 
+  // Estimate fundamental frequency from voiced audio using normalized
+  // autocorrelation. Zero-crossing counts consonants/noise as pitch and was
+  // producing implausible readings such as 587 Hz.
+  estimatePitch(rawData, sampleRate = 16000) {
+    if (!rawData || rawData.length < 256) return { pitchHz: 0, confidence: 0 };
+    let energy = 0;
+    for (let i = 0; i < rawData.length; i++) energy += rawData[i] * rawData[i];
+    const rms = Math.sqrt(energy / rawData.length);
+    if (rms < 0.025) return { pitchHz: 0, confidence: 0 };
+
+    let bestLag = 0;
+    let bestCorrelation = 0;
+    const minLag = Math.max(2, Math.floor(sampleRate / 350));
+    const maxLag = Math.min(rawData.length - 2, Math.floor(sampleRate / 70));
+    for (let lag = minLag; lag <= maxLag; lag++) {
+      let correlation = 0;
+      let leftEnergy = 0;
+      let rightEnergy = 0;
+      for (let i = 0; i < rawData.length - lag; i++) {
+        const left = rawData[i];
+        const right = rawData[i + lag];
+        correlation += left * right;
+        leftEnergy += left * left;
+        rightEnergy += right * right;
+      }
+      const normalized = correlation / Math.sqrt((leftEnergy * rightEnergy) || 1);
+      if (normalized > bestCorrelation) {
+        bestCorrelation = normalized;
+        bestLag = lag;
+      }
+    }
+    if (!bestLag || bestCorrelation < 0.55) return { pitchHz: 0, confidence: bestCorrelation };
+    return { pitchHz: sampleRate / bestLag, confidence: bestCorrelation };
+  }
+
   /**
    * Initialize microphone capture and downsampling to 16kHz PCM
    */
@@ -245,15 +342,22 @@ export class GeminiLiveSession {
         throw new Error('Microphone audio not supported by this browser.');
       }
 
-      this.micStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
+      // Request broadly first; Chrome/Safari can reject exact sample-rate
+      // constraints even when the microphone is available. PCM is downsampled
+      // to 16 kHz below, so the device does not need to provide 16 kHz natively.
+      // Reuse a stream obtained by the click handler when supplied. This keeps
+      // permission handling and the Gemini audio processor on the same stream.
+      if (this.options.micStream) {
+        this.micStream = this.options.micStream;
+      } else {
+        try {
+          this.micStream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+          });
+        } catch {
+          this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         }
-      });
+      }
 
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       this.audioInputContext = new AudioCtx();
@@ -278,7 +382,7 @@ export class GeminiLiveSession {
 class GeminiAudioRecorderProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.bufferSize = 2048;
+    this.bufferSize = 1024;
     this.buffer = new Float32Array(this.bufferSize);
     this.bytesWritten = 0;
   }
@@ -324,7 +428,7 @@ registerProcessor('gemini-audio-recorder-processor', GeminiAudioRecorderProcesso
 
       // Safe fallback if AudioWorklet is not available (e.g. older environments or test mocks)
       if (!workletAttached && this.audioInputContext.createScriptProcessor) {
-        this.micProcessor = this.audioInputContext.createScriptProcessor(4096, 1, 1);
+        this.micProcessor = this.audioInputContext.createScriptProcessor(2048, 1, 1);
         this.micProcessor.onaudioprocess = (e) => {
           const rawData = e.inputBuffer.getChannelData(0);
           this.processInputPCM(rawData);
@@ -347,6 +451,7 @@ registerProcessor('gemini-audio-recorder-processor', GeminiAudioRecorderProcesso
 
   /**
    * Process raw input audio data chunk from AudioWorkletNode or ScriptProcessorNode
+   * Continuously streams 512-1024 sample PCM chunks every 20-40ms with zero hold-back
    */
   processInputPCM(rawData) {
     if (this.isMuted || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
@@ -363,18 +468,17 @@ registerProcessor('gemini-audio-recorder-processor', GeminiAudioRecorderProcesso
     // Active user speech detection (speech threshold)
     if (rms > 0.02) {
       this.isUserCurrentlySpeaking = true;
-      this.userSpeechDetected = true;
-      this.userSpeechChunkCount++;
-      this.userSpeechRmsTotal += rms;
-
-      // Reset silence timer while user is actively speaking
       if (this.silenceTimeoutId) {
         clearTimeout(this.silenceTimeoutId);
         this.silenceTimeoutId = null;
       }
+      this.userSpeechDetected = true;
+      this.userSpeechChunkCount++;
+      this.userSpeechRmsTotal += rms;
 
       if (this.options.onUserSpeechChunk) {
-        this.options.onUserSpeechChunk({ rms, chunkCount: this.userSpeechChunkCount });
+        const { pitchHz, confidence } = this.estimatePitch(inputData, 16000);
+        this.options.onUserSpeechChunk({ rms, pitchHz, confidence, chunkCount: this.userSpeechChunkCount });
       }
 
       // Barge-in: interrupt AI model speech immediately when user begins speaking
@@ -387,12 +491,16 @@ registerProcessor('gemini-audio-recorder-processor', GeminiAudioRecorderProcesso
       if (this.state !== 'speaking') {
         this.setState('listening');
       }
+
+      // Reset the end-of-turn timer on every speech chunk. This is more
+      // reliable than waiting for a perfectly silent audio frame because
+      // microphone noise can keep RMS slightly above the threshold.
+      this.silenceTimeoutId = setTimeout(() => {
+        this.commitUserTurn();
+      }, 800);
     } else {
-      // User is silent: if they were speaking, wait 800ms of silence to commit turnComplete
-      if (this.isUserCurrentlySpeaking && !this.silenceTimeoutId) {
-        this.silenceTimeoutId = setTimeout(() => {
-          this.commitUserTurn();
-        }, 800);
+      if (this.isUserCurrentlySpeaking) {
+        this.isUserCurrentlySpeaking = false;
       }
     }
 
@@ -423,13 +531,14 @@ registerProcessor('gemini-audio-recorder-processor', GeminiAudioRecorderProcesso
    * Commit the user's spoken turn over WebSocket when silence is detected (800ms)
    */
   commitUserTurn() {
-    if (!this.isUserCurrentlySpeaking || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    if (!this.userSpeechDetected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
       this.isUserCurrentlySpeaking = false;
       this.silenceTimeoutId = null;
       return;
     }
 
     this.isUserCurrentlySpeaking = false;
+    this.userSpeechDetected = false;
     this.silenceTimeoutId = null;
     this.setState('thinking');
 
@@ -526,6 +635,24 @@ registerProcessor('gemini-audio-recorder-processor', GeminiAudioRecorderProcesso
       if (msgObj.setupComplete || msgObj.setup_complete) {
         console.log('[GeminiLive] Server confirmed setupComplete handshake. Triggering initial greeting...');
         this.sendInitialGreetingTrigger();
+        return;
+      }
+
+      const toolCall = msgObj.toolCall || msgObj.tool_call;
+      if (toolCall?.functionCalls || toolCall?.function_calls) {
+        const calls = toolCall.functionCalls || toolCall.function_calls || [];
+        const functionResponses = [];
+        for (const call of calls) {
+          try {
+            const result = await this.options.onToolCall(call.name, call.args || {});
+            functionResponses.push({ id: call.id, name: call.name, response: result || { success: true } });
+          } catch (error) {
+            functionResponses.push({ id: call.id, name: call.name, response: { success: false, message: error.message } });
+          }
+        }
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ toolResponse: { functionResponses } }));
+        }
         return;
       }
 
@@ -747,6 +874,9 @@ registerProcessor('gemini-audio-recorder-processor', GeminiAudioRecorderProcesso
    * Disconnect and clean up resources
    */
   cleanup() {
+    if (typeof window !== 'undefined' && window.__activeGeminiLiveSession === this) {
+      window.__activeGeminiLiveSession = null;
+    }
     if (this.silenceTimeoutId) {
       clearTimeout(this.silenceTimeoutId);
       this.silenceTimeoutId = null;

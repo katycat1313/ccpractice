@@ -33,6 +33,8 @@ import { playPickupClick, playHangupClick } from '../lib/soundUtils';
 import IframeMicModal from '../components/IframeMicModal';
 import WorkshopLessonStudio, { FOUNDATIONS_LESSONS } from '../components/WorkshopLessonStudio';
 import DiscoveryClosingLab from '../components/DiscoveryClosingLab';
+import PracticeTeleprompter from '../components/PracticeTeleprompter';
+import { getActiveScript } from '../lib/coachActions';
 
 export const WORKSHOP_DRILLS = [
   {
@@ -88,7 +90,7 @@ export default function WorkshopsPage() {
     : searchParams.get('tab') === 'discovery' 
     ? 'discovery' 
     : 'foundations';
-  const initialLesson = searchParams.get('lesson') || null;
+  const initialLesson = searchParams.get('lesson') || FOUNDATIONS_LESSONS[0].id;
   const initialLive = searchParams.get('live') === 'true';
 
   const [workshopTab, setWorkshopTab] = useState(initialTab);
@@ -125,6 +127,22 @@ export default function WorkshopsPage() {
       return {};
     }
   });
+
+  const [showTeleprompter, setShowTeleprompter] = useState(true);
+  const [leftTab, setLeftTab] = useState('teleprompter'); // 'teleprompter' | 'technique'
+  const [activeScript, setActiveScript] = useState(() => getActiveScript());
+
+  // Keep activeScript synchronized with any edits across app
+  useEffect(() => {
+    const handleScriptUpdated = () => {
+      try {
+        const active = getActiveScript();
+        if (active) setActiveScript(active);
+      } catch (_) {}
+    };
+    window.addEventListener('scriptmaster_script_updated', handleScriptUpdated);
+    return () => window.removeEventListener('scriptmaster_script_updated', handleScriptUpdated);
+  }, []);
 
   const recognitionRef = useRef(null);
   const responseInputRef = useRef(null);
@@ -425,7 +443,7 @@ OUTPUT STRICTLY AS JSON:
               Coach Marcus Live Audio
             </span>
             <span className="text-slate-600">•</span>
-            <span className="text-[11px] font-mono text-slate-400">gemini-3.8-flash &amp; gemini-3.8-live</span>
+            <span className="text-[11px] font-mono text-emerald-300">gemini-3.8-live (Live Audio)</span>
           </div>
         </div>
 
@@ -776,62 +794,112 @@ OUTPUT STRICTLY AS JSON:
         </div>
 
         {/* =========================================================================
-            ACTIVE DRILL ARENA (INTERACTIVE FLOW)
+            ACTIVE DRILL ARENA (INTERACTIVE FLOW WITH SCRIPT TELEPROMPTER)
            ========================================================================= */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           
-          {/* Left: Technique Breakdown & Contractor Profile (4 cols) */}
-          <div className="lg:col-span-4 space-y-5">
-            <div className="bg-slate-900/90 rounded-3xl p-6 border border-slate-800 shadow-2xl space-y-4">
-              <div className="flex items-center gap-2 pb-3 border-b border-slate-800">
-                <Target className="w-4 h-4 text-indigo-400" />
-                <span className="text-xs font-black uppercase tracking-wider text-white">
-                  Technique Breakdown
-                </span>
-              </div>
+          {/* Left Column: Script Teleprompter & Technique (5 cols if teleprompter active, else 4 cols) */}
+          <div className={`${showTeleprompter ? 'lg:col-span-5' : 'lg:col-span-4'} space-y-4`}>
 
-              <div className="p-3.5 rounded-2xl bg-indigo-950/30 border border-indigo-500/30 text-xs text-indigo-200 leading-relaxed font-medium">
-                👉 {activeDrill.breakdown}
+            {showTeleprompter && (
+              <div className="flex items-center gap-2 p-1 bg-slate-900/90 rounded-2xl border border-slate-800 text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setLeftTab('teleprompter')}
+                  className={`flex-1 py-2 px-3 rounded-xl text-center transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                    leftTab === 'teleprompter'
+                      ? 'bg-indigo-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Script Teleprompter</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLeftTab('technique')}
+                  className={`flex-1 py-2 px-3 rounded-xl text-center transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                    leftTab === 'technique'
+                      ? 'bg-indigo-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Target className="w-3.5 h-3.5" />
+                  <span>Technique &amp; Benchmarks</span>
+                </button>
               </div>
+            )}
 
-              <div className="space-y-3 pt-2">
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-slate-500 tracking-wider block">
-                    Target Contractor
-                  </span>
-                  <p className="text-xs font-bold text-white mt-0.5">
-                    {activeDrill.personaName}
-                  </p>
-                  <span className="text-[11px] text-indigo-300">
-                    {activeDrill.trade}
-                  </span>
+            {showTeleprompter && leftTab === 'teleprompter' ? (
+              <div className="h-[680px] animate-fadeIn">
+                <PracticeTeleprompter
+                  script={activeScript}
+                  onScriptChange={(updated) => {
+                    setActiveScript(updated);
+                  }}
+                  onInsertText={(text) => {
+                    setUserResponse(prev => prev ? `${prev} ${text}` : text);
+                    if (drillStatus === 'ready') {
+                      handleRunDrill();
+                    }
+                  }}
+                  className="h-full"
+                />
+              </div>
+            ) : (
+              <div className="space-y-4 animate-fadeIn">
+                <div className="bg-slate-900/90 rounded-3xl p-6 border border-slate-800 shadow-2xl space-y-4">
+                  <div className="flex items-center gap-2 pb-3 border-b border-slate-800">
+                    <Target className="w-4 h-4 text-indigo-400" />
+                    <span className="text-xs font-black uppercase tracking-wider text-white">
+                      Technique Breakdown
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-indigo-950/30 border border-indigo-500/30 text-xs text-indigo-200 leading-relaxed font-medium">
+                    👉 {activeDrill.breakdown}
+                  </div>
+
+                  <div className="space-y-3 pt-2">
+                    <div>
+                      <span className="text-[10px] font-bold uppercase text-slate-500 tracking-wider block">
+                        Target Contractor
+                      </span>
+                      <p className="text-xs font-bold text-white mt-0.5">
+                        {activeDrill.personaName}
+                      </p>
+                      <span className="text-[11px] text-indigo-300">
+                        {activeDrill.trade}
+                      </span>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] font-bold uppercase text-slate-500 tracking-wider block">
+                        Core Friction Point
+                      </span>
+                      <p className="text-xs text-slate-300 mt-0.5 leading-relaxed">
+                        {activeDrill.keyFriction}
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
-                <div>
-                  <span className="text-[10px] font-bold uppercase text-slate-500 tracking-wider block">
-                    Core Friction Point
+                {/* Benchmark Master Counter Reference Card */}
+                <div className="bg-slate-900/70 rounded-3xl p-5 border border-slate-800/80 space-y-2">
+                  <span className="text-[10px] font-bold uppercase text-emerald-400 tracking-wider flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Marcus's Benchmark Formula
                   </span>
-                  <p className="text-xs text-slate-300 mt-0.5 leading-relaxed">
-                    {activeDrill.keyFriction}
+                  <p className="text-xs text-slate-300 italic leading-relaxed pl-2 border-l-2 border-emerald-500/40">
+                    "{activeDrill.idealCounter}"
                   </p>
                 </div>
               </div>
-            </div>
-
-            {/* Benchmark Master Counter Reference Card */}
-            <div className="bg-slate-900/70 rounded-3xl p-5 border border-slate-800/80 space-y-2">
-              <span className="text-[10px] font-bold uppercase text-emerald-400 tracking-wider flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                Marcus's Benchmark Formula
-              </span>
-              <p className="text-xs text-slate-300 italic leading-relaxed pl-2 border-l-2 border-emerald-500/40">
-                "{activeDrill.idealCounter}"
-              </p>
-            </div>
+            )}
           </div>
 
-          {/* Right: Live Interactive Drill Stage (8 cols) */}
-          <div className="lg:col-span-8 space-y-5">
+          {/* Right: Live Interactive Drill Stage (7 cols if teleprompter active, else 8 cols) */}
+          <div className={`${showTeleprompter ? 'lg:col-span-7' : 'lg:col-span-8'} space-y-5`}>
             <div className="bg-[#0c101d] rounded-3xl p-6 sm:p-8 border border-slate-800 shadow-2xl space-y-6 relative overflow-hidden">
               
               {/* Stage Header */}
@@ -846,6 +914,20 @@ OUTPUT STRICTLY AS JSON:
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowTeleprompter(prev => !prev)}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer border ${
+                      showTeleprompter
+                        ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500/50 shadow-sm'
+                        : 'bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-white border-slate-700'
+                    }`}
+                    title={showTeleprompter ? "Hide script teleprompter" : "Show script teleprompter"}
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>{showTeleprompter ? "Teleprompter: ON" : "Teleprompter: OFF"}</span>
+                  </button>
+
                   {drillStatus === 'ready' && (
                     <button
                       onClick={handleRunDrill}

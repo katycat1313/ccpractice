@@ -15,18 +15,27 @@ import {
   TrendingUp,
   Flame,
   Radio,
-  AlertTriangle
+  AlertTriangle,
+  GraduationCap,
+  BookOpen,
+  Target,
+  Zap,
+  Shield,
+  HelpCircle,
+  CheckCircle2
 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
-import CoachAvatarLive from '../components/CoachAvatarLive';
 import PracticeTeleprompter from '../components/PracticeTeleprompter';
+import LiveSpeechFeedback from '../components/LiveSpeechFeedback';
 import IframeMicModal from '../components/IframeMicModal';
-import { geminiLiveClient } from '../lib/geminiLiveClient';
+import { geminiLiveClient, MARCUS_CLASSROOM_INSTRUCTOR_PROMPT } from '../lib/geminiLiveClient';
 import { playTelephoneRing, playPickupClick, playHangupClick } from '../lib/soundUtils';
 import { getCustomProspects, getSelectedProspectId, setSelectedProspectId } from '../lib/prospectManager';
 import { saveRecording, formatSeconds } from '../lib/recordingsService';
 import { askGeminiCoach } from '../lib/geminiClient';
 import { WV_SCRIPT_TEMPLATES, HANDLED_CLOSING_PITCH_DEFAULTS } from './ScriptBuilderPage';
+import { analyzeDelivery } from '../lib/trainingAnalysis';
+import { recordTrainingResult, getNextTrainingDrill } from '../lib/trainingProgress';
 
 export const CARL_DEFAULT_SCRIPT = {
   id: 'tpl-carl',
@@ -95,6 +104,9 @@ export default function PracticePage({ setScript: setGlobalScript }) {
     return list.find(p => p.id === currId) || list[0];
   });
 
+  // Studio Mode: 'classroom' (Masterclass Workshop with Coach Marcus) | 'contractor' (Contractor Sparring)
+  const [studioMode, setStudioMode] = useState('classroom');
+
   // Active Script State - Dynamically read from localStorage, defaulting to Carl McIntyre
   const [currentScript, setCurrentScript] = useState(() => getDynamicActiveScript());
 
@@ -103,6 +115,7 @@ export default function PracticePage({ setScript: setGlobalScript }) {
   const [isCallActive, setIsCallActive] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const [activeObjectionIndex, setActiveObjectionIndex] = useState(null);
+  const [activeScriptPart, setActiveScriptPart] = useState('hook');
   const [liveSessionState, setLiveSessionState] = useState('disconnected');
   const [isMuted, setIsMuted] = useState(false);
   const [isIframeMicModalOpen, setIsIframeMicModalOpen] = useState(false);
@@ -112,6 +125,10 @@ export default function PracticePage({ setScript: setGlobalScript }) {
   const [isAnalyzingCall, setIsAnalyzingCall] = useState(false);
   const [transcriptTurns, setTranscriptTurns] = useState([]);
   const [typedInput, setTypedInput] = useState('');
+  const [liveSpeechText, setLiveSpeechText] = useState('');
+  const [liveSpeechMetrics, setLiveSpeechMetrics] = useState({ wpm: 0, pace: 'steady', pitch: 'neutral', pitchLabel: 'Measuring', toneLabel: 'Keep it conversational' });
+  const speechStartedAtRef = useRef(null);
+  const pitchBaselineRef = useRef([]);
 
   // Speech Accounting References
   const timerRef = useRef(null);
@@ -207,8 +224,8 @@ ${(prospect.commonObjections || []).map((o, idx) => `   - Objection #${idx + 1}:
 4. Only agree to a quick 10-minute follow-up if they clearly answer your objection with zero friction.`;
   }, []);
 
-  // Start Roleplay Call
-  const handleStartCall = async () => {
+  // Start Roleplay Call or Masterclass Lesson
+  const handleStartCall = async (initialDrillPrompt = null) => {
     // 1. Immediate User-Gesture AudioContext Resumption for Chrome
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -230,22 +247,36 @@ ${(prospect.commonObjections || []).map((o, idx) => `   - Objection #${idx + 1}:
     setIsDialing(true);
     setPostCallFeedback(null);
     setTranscriptTurns([]);
+    setLiveSpeechText('');
+    setLiveSpeechMetrics({ wpm: 0, pace: 'steady', pitch: 'neutral', pitchLabel: 'Measuring', toneLabel: 'Keep it conversational' });
+    speechStartedAtRef.current = null;
+    pitchBaselineRef.current = [];
     setCallDuration(0);
+    setActiveScriptPart('hook');
     userSpeechChunkCountRef.current = 0;
     userSpeechTokensCountRef.current = 0;
     userSpeechTextRef.current = '';
 
     // 2. Play authentic telephone ring sound
-    await playTelephoneRing(2.0);
+    await playTelephoneRing(1.8);
 
     // 3. Play pickup click
     playPickupClick();
     setIsDialing(false);
     setIsCallActive(true);
 
-    // 4. Connect to Gemini Live using official bidirectional WebSocket
+    const isClassroom = studioMode === 'classroom';
     const contractorPrompt = buildContractorPersonaPrompt(activeProspect);
-    const voiceId = activeProspect.id?.includes('delbert') ? 'Charon' : activeProspect.id?.includes('bo') ? 'Puck' : 'Fenrir';
+    const systemInstruction = isClassroom ? MARCUS_CLASSROOM_INSTRUCTOR_PROMPT : contractorPrompt;
+    const scriptContext = `\n\nACTIVE TELEPROMPTER SCRIPT (authoritative):\nHook: ${currentScript.hook}\nProblem: ${currentScript.problem || currentScript.painValue?.problem || ''}\nValue: ${currentScript.value || currentScript.painValue?.value || ''}\nClosing ask: ${currentScript.closingAsk || ''}\nDelivery cues: ${currentScript.deliveryNotes || 'Use a calm pace, pause after the hook, and drop your tone at the end of statements.'}\nUse these exact lines when coaching the student. Do not substitute a different generic opener while this script is displayed.`;
+    const voiceId = isClassroom ? 'Fenrir' : (activeProspect.id?.includes('delbert') ? 'Charon' : activeProspect.id?.includes('bo') ? 'Puck' : 'Fenrir');
+    const remoteSpeakerName = isClassroom ? 'Coach Marcus' : activeProspect.name;
+
+    const initialGreeting = typeof initialDrillPrompt === 'string' && initialDrillPrompt.trim()
+      ? initialDrillPrompt
+      : (isClassroom
+        ? `Coach Marcus, I just connected to the live masterclass studio. Introduce yourself as my instructor, ask what contractor persona or opener I want to drill today (e.g. ${activeProspect.name}), and immediately start with our baseline 10-second pattern interrupt drill.`
+        : undefined);
 
     // Start browser speech recognition to capture exact words simultaneously
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -256,13 +287,21 @@ ${(prospect.commonObjections || []).map((o, idx) => `   - Objection #${idx + 1}:
         recognition.interimResults = true;
         recognition.lang = 'en-US';
         recognition.onresult = (e) => {
-          let full = '';
-          for (let i = 0; i < e.results.length; i++) {
-            full += e.results[i][0].transcript + ' ';
-          }
-          const clean = full.trim();
-          userSpeechTextRef.current = clean;
+          // Continuous recognition retains prior final results. Render only
+          // the current segment so each speaking turn starts clean.
+          const clean = e.results[e.results.length - 1]?.[0]?.transcript?.trim() || '';
           const words = clean.split(/\s+/).filter(Boolean);
+          setLiveSpeechText(clean);
+          if (clean && !speechStartedAtRef.current) speechStartedAtRef.current = performance.now();
+          const elapsedMinutes = speechStartedAtRef.current ? Math.max((performance.now() - speechStartedAtRef.current) / 60000, 1 / 60) : 0;
+          const wpm = Math.round(words.length / Math.max(elapsedMinutes, 1 / 60));
+          setLiveSpeechMetrics(prev => ({
+            ...prev,
+            wpm,
+            pace: wpm > 175 ? 'rushed' : wpm > 0 && wpm < 105 ? 'slow' : 'steady',
+            toneLabel: wpm > 175 ? 'Slow down; add a pause' : wpm < 105 && wpm > 0 ? 'Add forward energy' : 'Conversational pace'
+          }));
+          userSpeechTextRef.current = clean;
           userSpeechTokensCountRef.current = words.length;
 
           // Track turn
@@ -286,24 +325,40 @@ ${(prospect.commonObjections || []).map((o, idx) => `   - Objection #${idx + 1}:
 
     const session = geminiLiveClient.connect(activeProspect, currentScript, {
       voiceName: voiceId,
-      systemInstruction: contractorPrompt,
+      systemInstruction: `${systemInstruction}${scriptContext}`,
+      initialPrompt: initialGreeting,
       enableSearch: true,
       onStateChange: (st) => setLiveSessionState(st),
-      onUserSpeechChunk: ({ chunkCount }) => {
+      onUserSpeechChunk: ({ chunkCount, pitchHz, confidence }) => {
         userSpeechChunkCountRef.current = chunkCount;
+        if (pitchHz > 0 && confidence >= 0.65) {
+          const samples = pitchBaselineRef.current;
+          if (samples.length < 20) samples.push(pitchHz);
+          const baseline = samples.length ? samples.reduce((sum, value) => sum + value, 0) / samples.length : pitchHz;
+          const pitch = pitchHz > baseline * 1.22 ? 'high' : pitchHz < baseline * 0.82 ? 'grounded' : 'neutral';
+          setLiveSpeechMetrics(prev => ({
+            ...prev,
+            pitch,
+            pitchLabel: `${Math.round(pitchHz)} Hz • ${pitch === 'high' ? 'rising/high' : pitch === 'grounded' ? 'grounded' : 'near your baseline'}`
+          }));
+        }
       },
       onTextToken: (_token, fullText) => {
+        if (/busy|email|already have|not interested|send/i.test(fullText || '')) setActiveScriptPart('rebuttal');
+        else if (fullText) setActiveScriptPart('problem');
         setTranscriptTurns(prev => {
           const last = prev[prev.length - 1];
-          if (last && last.speaker === activeProspect.name) {
+          if (last && last.speaker === remoteSpeakerName) {
             const next = [...prev];
             next[next.length - 1] = { ...last, text: fullText };
             return next;
           }
-          return [...prev, { speaker: activeProspect.name, text: fullText, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }];
+          return [...prev, { speaker: remoteSpeakerName, text: fullText, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }];
         });
       },
       onTurnComplete: () => {
+        setLiveSpeechText('');
+        speechStartedAtRef.current = null;
         const lastTurn = transcriptTurns[transcriptTurns.length - 1]?.text?.toLowerCase() || '';
         const matchingRebIdx = (currentScript.rebuttals || []).findIndex(r => 
           lastTurn.includes('cell') || lastTurn.includes('service') || lastTurn.includes('paper') || lastTurn.includes('email') || lastTurn.includes('connie')
@@ -320,6 +375,23 @@ ${(prospect.commonObjections || []).map((o, idx) => `   - Objection #${idx + 1}:
     });
 
     liveSessionRef.current = session;
+  };
+
+  // Trigger Live Rapid Drill during or starting a Masterclass
+  const handleTriggerLiveDrill = (drillTitle, drillPrompt) => {
+    if (isCallActive && liveSessionRef.current) {
+      liveSessionRef.current.sendTextMessage(drillPrompt);
+      setTranscriptTurns(prev => [
+        ...prev,
+        {
+          speaker: 'You',
+          text: `[Rapid Drill: ${drillTitle}] ${drillPrompt}`,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }
+      ]);
+    } else {
+      handleStartCall(drillPrompt);
+    }
   };
 
   // End Roleplay Call & Transition to Coach Marcus Feedback
@@ -372,7 +444,11 @@ ${(prospect.commonObjections || []).map((o, idx) => `   - Objection #${idx + 1}:
         prospectRole: activeProspect.role || activeProspect.industry,
         duration: totalSeconds,
         scriptTitle: currentScript.title,
-        transcript: transcriptTurns.map(t => `${t.speaker}: ${t.text}`).join('\n')
+        transcript: transcriptTurns.map(t => `${t.speaker}: ${t.text}`).join('\n'),
+        transcriptTurns: transcriptTurns.map((turn, index) => ({
+          ...turn,
+          timestampSeconds: Math.round((index / Math.max(1, transcriptTurns.length - 1)) * totalSeconds)
+        }))
       });
     } catch {
       /* ignore */
@@ -385,6 +461,7 @@ ${(prospect.commonObjections || []).map((o, idx) => `   - Objection #${idx + 1}:
   // Generate Candid Coaching Feedback from Coach Marcus
   const generateCandidCoachFeedback = async (durationSecs, turns, userWordCount) => {
     setIsAnalyzingCall(true);
+    const deliveryAnalysis = analyzeDelivery(turns, durationSecs, currentScript);
 
     const callTranscript = turns.length > 0
       ? turns.map(t => `${t.speaker}: ${t.text}`).join('\n')
@@ -397,6 +474,7 @@ Contractor Common Pushbacks: ${(activeProspect.commonObjections || []).join(' | 
 Rep Script Hook: "${currentScript.hook}".
 Call Duration: ${durationSecs} seconds.
 User Spoken Words: ~${userWordCount}.
+Local delivery analysis: ${JSON.stringify(deliveryAnalysis)}
 Call Transcript:
 ${callTranscript}
 
@@ -412,7 +490,9 @@ CRITICAL RULES:
   "hookFeedback": "...",
   "pacingFeedback": "...",
   "rebuttalFeedback": "...",
-  "keyTakeaway": "..."
+  "keyTakeaway": "...",
+  "nextDrill": "...",
+  "deliveryMetrics": ${JSON.stringify(deliveryAnalysis)}
 }`;
 
     try {
@@ -450,6 +530,11 @@ CRITICAL RULES:
         };
       }
 
+      parsed.deliveryMetrics = parsed.deliveryMetrics || deliveryAnalysis;
+      recordTrainingResult(deliveryAnalysis, parsed);
+      parsed.nextDrill = parsed.nextDrill || deliveryAnalysis.nextDrill;
+      parsed.reviewDrill = getNextTrainingDrill();
+
       setPostCallFeedback(parsed);
     } catch {
       setPostCallFeedback({
@@ -474,6 +559,16 @@ CRITICAL RULES:
     setTranscriptTurns(prev => [...prev, { speaker: 'You', text: msg, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
     liveSessionRef.current.sendTextMessage(msg);
     setTypedInput('');
+  };
+
+  const handleDemonstrateLine = (line, label) => {
+    if (!liveSessionRef.current || !line?.trim()) return;
+    liveSessionRef.current.sendTextMessage(`Model the ${label} exactly as written. Demonstrate the correct pace, pauses, emphasis, and downward inflection. Then ask the student to repeat it.`);
+    setTranscriptTurns(prev => [...prev, {
+      speaker: 'Coach',
+      text: `[Model ${label}] ${line}`,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }]);
   };
 
   return (
@@ -506,42 +601,141 @@ CRITICAL RULES:
                 </span>
               </h1>
               <p className="text-xs text-slate-400 mt-0.5">
-                Dial authentic Mountain State contractors in character, drill your live objections, and get candid coaching.
+                {studioMode === 'classroom'
+                  ? 'Interactive 1-on-1 Masterclass with Coach Marcus: Spoken tonality critique, rapid micro-drills, and script co-creation.'
+                  : 'Dial authentic Mountain State contractors in character, drill your live objections, and get candid coaching.'}
               </p>
             </div>
           </div>
 
-          {/* Persona Switcher Dropdown */}
-          <div className="flex flex-wrap items-center gap-2.5">
-            <span className="text-[11px] font-extrabold uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5 text-indigo-400" /> Target:
-            </span>
+          {/* Mode Switcher & Persona Target */}
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setIsCoachPanelOpen(true)}
+              className="px-3 py-1.5 rounded-xl bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold transition hover:bg-emerald-600/30"
+            >
+              Open Coach
+            </button>
+            {/* Studio Mode Selector */}
+            <div className="flex items-center gap-1 p-1 rounded-2xl bg-slate-900 border border-slate-800 shadow-inner">
+              <button
+                type="button"
+                disabled={isCallActive}
+                onClick={() => setStudioMode('classroom')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  studioMode === 'classroom'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30 border border-indigo-400'
+                    : 'text-slate-400 hover:text-white disabled:opacity-50'
+                }`}
+                title="1-on-1 audio classroom workshop with Coach Marcus"
+              >
+                <GraduationCap className="w-3.5 h-3.5 text-amber-300" />
+                <span>Classroom Masterclass</span>
+              </button>
+              <button
+                type="button"
+                disabled={isCallActive}
+                onClick={() => setStudioMode('contractor')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  studioMode === 'contractor'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30 border border-indigo-400'
+                    : 'text-slate-400 hover:text-white disabled:opacity-50'
+                }`}
+                title="Direct roleplay sparring with contractor persona"
+              >
+                <Users className="w-3.5 h-3.5 text-sky-400" />
+                <span>Contractor Sparring</span>
+              </button>
+            </div>
 
-            <div className="flex flex-wrap items-center gap-1.5">
-              {prospectsList.map((p) => {
-                const isSelected = activeProspect.id === p.id;
-                return (
-                  <button
-                    key={p.id}
-                    disabled={isCallActive}
-                    onClick={() => handleSelectPersona(p)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                      isSelected
-                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30 border border-indigo-400'
-                        : 'bg-slate-900 text-slate-300 hover:text-white border border-slate-800 hover:border-slate-700 disabled:opacity-50'
-                    }`}
-                  >
-                    <span>{p.name.split(' ')[0]}</span>
-                    <span className="text-[10px] opacity-75 font-normal">
-                      ({p.industry?.split(' ')[0] || p.role?.split(' ')[0]})
-                    </span>
-                    {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
-                  </button>
-                );
-              })}
+            {/* Target Persona Dropdown */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-extrabold uppercase text-slate-500 tracking-wider hidden sm:inline">
+                Target:
+              </span>
+              <div className="flex flex-wrap items-center gap-1">
+                {prospectsList.map((p) => {
+                  const isSelected = activeProspect.id === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      disabled={isCallActive}
+                      onClick={() => handleSelectPersona(p)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+                        isSelected
+                          ? 'bg-slate-800 text-indigo-300 border border-indigo-500/40'
+                          : 'bg-slate-900/60 text-slate-400 hover:text-slate-200 border border-slate-850 disabled:opacity-50'
+                      }`}
+                    >
+                      <span>{p.name.split(' ')[0]}</span>
+                      {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </header>
+
+        {/* Rapid Classroom Curriculum Toolbar (Always accessible) */}
+        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-md">
+          <div className="flex items-center gap-2">
+            <span className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400">
+              <Zap className="w-3.5 h-3.5" />
+            </span>
+            <div>
+              <span className="text-xs font-bold text-slate-200">
+                Classroom Drills
+              </span>
+              <span className="text-[10px] text-slate-400 block">
+                Tap any curriculum module to drill live with Coach Marcus
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar w-full sm:w-auto">
+            {[
+              {
+                id: 'pattern-interrupt',
+                title: '10s Pattern Interrupt',
+                icon: Zap,
+                prompt: `Coach Marcus, run the 10-second pattern interrupt drill with me for ${activeProspect.name}. Model the line first with calm, downward inflection, then critique my delivery.`
+              },
+              {
+                id: 'friction-pivot',
+                title: 'The Friction Pivot',
+                icon: RotateCcw,
+                prompt: `Coach Marcus, hit me with a harsh initial brush-off like 'I am busy hauling materials on Route 60' and test my friction pivot into a burning jobsite problem.`
+              },
+              {
+                id: 'discovery-diagnosis',
+                title: 'Discovery & Diagnosis',
+                icon: Target,
+                prompt: `Coach Marcus, run the discovery drill. Roleplay briefly as a skeptical contractor and drill my diagnostic questions without feature pitching.`
+              },
+              {
+                id: 'downside-close',
+                title: 'Downside Risk Close',
+                icon: Shield,
+                prompt: `Coach Marcus, drill the closing ask. Test how cleanly I close for the $250 upfront onboarding deposit with zero commission breath.`
+              }
+            ].map(drill => {
+              const Icon = drill.icon;
+              return (
+                <button
+                  key={drill.id}
+                  type="button"
+                  onClick={() => handleTriggerLiveDrill(drill.title, drill.prompt)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-indigo-950/60 border border-slate-800 hover:border-indigo-500/50 text-slate-300 hover:text-indigo-200 text-[11px] font-semibold transition shrink-0 cursor-pointer shadow-xs"
+                >
+                  <Icon className="w-3 h-3 text-amber-400" />
+                  <span>{drill.title}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         {/* =========================================================================
             SPLIT SCREEN WORKSHOP:
@@ -555,28 +749,34 @@ CRITICAL RULES:
              ========================================================================= */}
           <div className="lg:col-span-7 flex flex-col gap-6">
 
-            {/* Target Contractor Banner */}
+            {/* Target Banner: Coach Marcus (Classroom) or Contractor Persona */}
             <div className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 shadow-xl flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-2xl overflow-hidden border border-slate-700 shrink-0 bg-slate-950">
                   <img
-                    src={activeProspect.avatarUrl || 'https://images.unsplash.com/photo-1552058544-f2b08422138a?auto=format&fit=crop&w=800&q=80'}
-                    alt={activeProspect.name}
+                    src={
+                      studioMode === 'classroom'
+                        ? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=800&q=80'
+                        : (activeProspect.avatarUrl || 'https://images.unsplash.com/photo-1552058544-f2b08422138a?auto=format&fit=crop&w=800&q=80')
+                    }
+                    alt={studioMode === 'classroom' ? 'Coach Marcus' : activeProspect.name}
                     className="w-full h-full object-cover"
                   />
                 </div>
                 <div>
                   <h3 className="text-sm font-black text-white flex items-center gap-2">
-                    <span>{activeProspect.name}</span>
+                    <span>{studioMode === 'classroom' ? 'Marcus Vance' : activeProspect.name}</span>
                     <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 text-[10px] font-semibold">
-                      {activeProspect.role || activeProspect.industry}
+                      {studioMode === 'classroom' ? 'Master Sales Instructor' : (activeProspect.role || activeProspect.industry)}
                     </span>
                   </h3>
                   <p className="text-xs text-indigo-300 font-medium">
-                    {activeProspect.companyName} • {activeProspect.city}
+                    {studioMode === 'classroom'
+                      ? `Training Target: ${activeProspect.name} (${activeProspect.companyName || 'General Contractor'})`
+                      : `${activeProspect.companyName} • ${activeProspect.city}`}
                   </p>
                   <span className="text-[10px] text-slate-400 font-mono">
-                    Context: {activeProspect.tag}
+                    {studioMode === 'classroom' ? 'Mode: Live 1-on-1 Spoken Masterclass & Script Lab' : `Context: ${activeProspect.tag}`}
                   </span>
                 </div>
               </div>
@@ -591,35 +791,32 @@ CRITICAL RULES:
                     : 'bg-slate-800 text-slate-400 border-slate-700'
                 }`}>
                   <Radio className="w-3.5 h-3.5" />
-                  <span>{isCallActive ? formatSeconds(callDuration) : isDialing ? 'Dialing...' : 'Ready to Dial'}</span>
+                  <span>{isCallActive ? formatSeconds(callDuration) : isDialing ? 'Connecting...' : 'Ready to Connect'}</span>
                 </span>
               </div>
             </div>
 
-            {/* Central Dialing HUD: CoachAvatarLive Component */}
+            {/* Central dialing HUD. PracticePage owns the single Live session. */}
             <div className="relative">
-              <CoachAvatarLive
-                voiceName={activeProspect.id?.includes('delbert') ? 'Charon' : activeProspect.id?.includes('bo') ? 'Puck' : 'Fenrir'}
-                systemPrompt={buildContractorPersonaPrompt(activeProspect)}
-                onIframeMicBlocked={() => setIsIframeMicModalOpen(true)}
-                className="w-full min-h-[380px]"
-              />
+              <div className="w-full min-h-[380px] rounded-3xl bg-slate-900/70 border border-slate-800" aria-label="Practice live audio console" />
 
               {/* Central One-Click Call Button Overlay if Disconnected */}
               {!isCallActive && !isDialing && (
                 <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-xs rounded-3xl flex flex-col items-center justify-center p-6 gap-3 z-10">
                   <button
                     type="button"
-                    onClick={handleStartCall}
+                    onClick={() => handleStartCall()}
                     className="w-28 h-28 rounded-full bg-gradient-to-tr from-indigo-600 via-purple-600 to-indigo-500 hover:from-indigo-500 hover:to-purple-500 text-white flex flex-col items-center justify-center shadow-2xl shadow-indigo-600/40 hover:scale-105 active:scale-95 transition-all cursor-pointer border-2 border-indigo-400/40 group"
                   >
                     <PhoneCall className="w-10 h-10 fill-white group-hover:scale-110 transition-transform mb-1" />
                     <span className="text-[11px] font-extrabold uppercase tracking-wider">
-                      Start Voice Call
+                      {studioMode === 'classroom' ? 'Start Masterclass' : 'Start Voice Call'}
                     </span>
                   </button>
                   <p className="text-xs text-slate-300 font-semibold text-center max-w-sm">
-                    Tap to dial <span className="text-white">{activeProspect.name}</span>. Test your 20-second opening hook with live bidirectional audio.
+                    {studioMode === 'classroom'
+                      ? `Connect with Coach Marcus for live 1-on-1 audio training, tonality critique, and script co-creation for ${activeProspect.name}.`
+                      : `Tap to dial ${activeProspect.name}. Test your 20-second opening hook with live bidirectional audio.`}
                   </p>
                 </div>
               )}
@@ -672,6 +869,12 @@ CRITICAL RULES:
                 </button>
               </form>
             )}
+
+            <LiveSpeechFeedback
+              text={liveSpeechText}
+              isListening={isCallActive && liveSessionState === 'listening'}
+              metrics={liveSpeechMetrics}
+            />
 
             {/* =========================================================================
                 POST-CALL CANDID COACHING FEEDBACK CARD
@@ -774,6 +977,15 @@ CRITICAL RULES:
                       </div>
                     </div>
 
+                    {postCallFeedback.deliveryMetrics && (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 rounded-2xl bg-slate-950/70 border border-slate-800 p-4 text-xs">
+                        <div><span className="block text-slate-500 uppercase font-bold text-[10px]">Pace</span><strong className="text-white">{postCallFeedback.deliveryMetrics.wpm || 0} WPM</strong><span className="block text-indigo-300">{postCallFeedback.deliveryMetrics.paceLabel}</span></div>
+                        <div><span className="block text-slate-500 uppercase font-bold text-[10px]">Fillers</span><strong className="text-white">{postCallFeedback.deliveryMetrics.fillerCount || 0}</strong><span className="block text-amber-300">{postCallFeedback.deliveryMetrics.fillerWords?.join(', ') || 'Clean'}</span></div>
+                        <div><span className="block text-slate-500 uppercase font-bold text-[10px]">Questions</span><strong className="text-white">{postCallFeedback.deliveryMetrics.questionCount || 0}</strong><span className="block text-emerald-300">Qualification signals: {postCallFeedback.deliveryMetrics.qualificationSignals?.length || 0}</span></div>
+                        <div><span className="block text-slate-500 uppercase font-bold text-[10px]">Next drill</span><span className="text-indigo-200">{postCallFeedback.nextDrill}</span><span className="block text-amber-300 text-[10px] mt-1">Review: {postCallFeedback.reviewDrill}</span></div>
+                      </div>
+                    )}
+
                     {/* Key Takeaway */}
                     {postCallFeedback.keyTakeaway && (
                       <div className="p-3.5 rounded-2xl bg-indigo-950/30 border border-indigo-500/30 flex items-center justify-between gap-3 text-xs text-indigo-200">
@@ -808,6 +1020,7 @@ CRITICAL RULES:
           {/* =========================================================================
               RIGHT COLUMN: PINNED SIDE-DOCKED LIVE TELEPROMPTER (5 cols)
              ========================================================================= */}
+          <>
           <div className="lg:col-span-5 h-[calc(100vh-8.5rem)] sticky top-24">
             {(() => {
               const activeScript = JSON.parse(localStorage.getItem('scriptmaster_active_script') || '{}');
@@ -836,6 +1049,7 @@ CRITICAL RULES:
               return (
                 <PracticeTeleprompter
                   script={teleprompterScript}
+                  onDemonstrate={handleDemonstrateLine}
                   onScriptChange={(updated) => {
                     const next = {
                       ...updated,
@@ -849,12 +1063,14 @@ CRITICAL RULES:
                     if (setGlobalScript) setGlobalScript(next);
                   }}
                   activeObjectionIndex={activeObjectionIndex}
+                  activeScriptPart={activeScriptPart}
                   isCallActive={isCallActive}
                   className="h-full"
                 />
               );
             })()}
           </div>
+          </>
 
         </div>
       </main>
@@ -864,6 +1080,7 @@ CRITICAL RULES:
         isOpen={isIframeMicModalOpen} 
         onClose={() => setIsIframeMicModalOpen(false)} 
       />
+
     </div>
   );
 }

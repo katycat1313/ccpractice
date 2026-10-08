@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
+import { useNavigate } from 'react-router-dom';
 import { 
   Zap, 
   Sparkles, 
@@ -26,14 +27,18 @@ import {
   Radio,
   PhoneCall,
   PhoneOff,
-  ExternalLink
+  ExternalLink,
+  Wand2,
+  Sliders,
+  Activity
 } from 'lucide-react';
 import { GoogleGenAI } from '@google/genai';
-import { getGeminiApiKey, askGeminiCoach, getGeminiTTSAudio } from '../lib/geminiClient';
+import { getGeminiApiKey, askGeminiCoach, getGeminiTTSAudio, researchProspectWithGemini } from '../lib/geminiClient';
 import { GeminiLiveSession } from '../lib/geminiLiveClient';
-import { saveScriptToScriptsPage } from '../lib/coachActions';
+import { saveScriptToScriptsPage, getActiveScript, pullUpScript, openPracticeSession } from '../lib/coachActions';
 import { playPickupClick, playHangupClick } from '../lib/soundUtils';
 import IframeMicModal from './IframeMicModal';
+import PracticeTeleprompter from './PracticeTeleprompter';
 
 export const FOUNDATIONS_LESSONS = [
   {
@@ -261,11 +266,48 @@ export default function WorkshopLessonStudio({
   onClose = () => {},
   onSelectLesson = () => {}
 }) {
+  const navigate = useNavigate();
+  const coachName = (() => {
+    try { return JSON.parse(localStorage.getItem('scriptmaster_user') || '{}').coachName || 'Coach'; } catch { return 'Coach'; }
+  })();
   const activeLesson = FOUNDATIONS_LESSONS.find(l => l.id === lessonId) || FOUNDATIONS_LESSONS[0];
+
+  // Mode Switcher: 'classroom' | 'copilot' | 'simulation'
+  const [workshopMode, setWorkshopMode] = useState('classroom');
 
   // Studio Progression State
   const [currentScenarioIndex, setCurrentScenarioIndex] = useState(0);
   const activeScenario = activeLesson.scenarios[currentScenarioIndex] || activeLesson.scenarios[0];
+
+  // Helper to generate dynamic, interactive instructor greetings
+  const createInstructorGreeting = (mode, lesson, scenario) => {
+    if (mode === 'copilot') {
+      return {
+        id: `coach-init-${Date.now()}`,
+        sender: 'coach',
+        text: `👋 **Coach Marcus here in Script Co-Pilot mode.**\n\nLet's co-construct and sharpen your contractor script for **Lesson 0${lesson.number}: ${lesson.title}**.\n\nChoose an element below to brainstorm or refine:\n- 🎯 **10-Second Pattern Interrupt Hook**\n- 💥 **Bleeding-Neck Contractor Pain**\n- 🛠️ **Differentiated Offline Proof**\n- 🤝 **Low-Friction Downside-Risk Close**\n\nType your rough thought or speak into the mic. Use **"Send to Script Builder"** or **"Lock to Teleprompter"** anytime to practice live!`,
+        score: null,
+        correction: null
+      };
+    }
+    if (mode === 'simulation') {
+      return {
+        id: `coach-init-${Date.now()}`,
+        sender: 'coach',
+        text: `📞 **Simulated Call Mode Active.**\n\nI am sparring with you as the contractor **Dave** on a windy metal tear-off roof in Kanawha Valley.\n\n*Contractor State:* ${scenario.context}\n\nContractor line:\n> **"${scenario.contractorLine}"**\n\n${scenario.challenge}\n\nYou have 10 seconds. Deliver your response now via mic or text—I will react like a real contractor and pause for tactical coaching if you lose frame!`,
+        score: null,
+        correction: null
+      };
+    }
+    // 'classroom' - Interactive Masterclass Instructor
+    return {
+      id: `coach-init-${Date.now()}`,
+      sender: 'coach',
+      text: `🎓 **Welcome to Lesson 0${lesson.number}: ${lesson.title}**!\n\nI'm Coach Marcus Vance, your 1-on-1 direct-response phone sales instructor. We do not just run passive roleplay—we drill conversational mechanics, eliminate apologetic commission breath, and wire in calm peer-to-peer status.\n\n👉 **Active Drill:** ${scenario.title}\n*Jobsite Context:* ${scenario.context}\n\nContractor says:\n> **"${scenario.contractorLine}"**\n\n${scenario.challenge}\n\nDeliver your opening pattern interrupt below via mic, text, or tap **Live Voice (Gemini 2.0)** for live bidirectional audio feedback!`,
+      score: null,
+      correction: null
+    };
+  };
 
   // Interactive Dialogue State
   const [userSpeechInput, setUserSpeechInput] = useState('');
@@ -273,7 +315,7 @@ export default function WorkshopLessonStudio({
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [isAgentMuted, setIsAgentMuted] = useState(false);
   const [isIframeMicModalOpen, setIsIframeMicModalOpen] = useState(false);
-  const [activeTabSide, setActiveTabSide] = useState('mistakes'); // 'mistakes' | 'replacements' | 'notes'
+  const [activeTabSide, setActiveTabSide] = useState('mistakes'); // 'replacements' | 'mistakes' | 'notes' | 'teleprompter'
   const [liveCoachNotes, setLiveCoachNotes] = useState([]);
   const [completedScenarios, setCompletedScenarios] = useState({});
   const [scriptDraftState, setScriptDraftState] = useState({
@@ -284,7 +326,7 @@ export default function WorkshopLessonStudio({
   });
   const [appliedToBoardToast, setAppliedToBoardToast] = useState(false);
 
-  // Gemini-3.8-Live Bidirectional Audio Session State
+  // Gemini Live Bidirectional Audio Session State (gemini-3.8-live)
   const [isLiveAudioConnected, setIsLiveAudioConnected] = useState(false);
   const [liveAudioStatus, setLiveAudioStatus] = useState('disconnected'); // 'disconnected' | 'connecting' | 'connected' | 'listening' | 'speaking' | 'error'
   const [liveTokens, setLiveTokens] = useState('');
@@ -295,13 +337,7 @@ export default function WorkshopLessonStudio({
 
   // Chat message stream inside lesson
   const [lessonMessages, setLessonMessages] = useState(() => [
-    {
-      id: `coach-init-${Date.now()}`,
-      sender: 'coach',
-      text: `Welcome to **Lesson 0${activeLesson.number}: ${activeLesson.title}**!\n\nI'm Coach Marcus. In this drill, we eliminate bad habits and wire in high-leverage contractor phrasing.\n\n👉 **${activeScenario.title}**\n*Jobsite Context:* ${activeScenario.context}\n\nContractor says:\n> **"${activeScenario.contractorLine}"**\n\n${activeScenario.challenge}\n\nDeliver your response below via mic, text, or tap **Gemini-3.8-Live Voice** for bidirectional audio!`,
-      score: null,
-      correction: null
-    }
+    createInstructorGreeting('classroom', activeLesson, activeScenario)
   ]);
 
   const recognitionRef = useRef(null);
@@ -309,21 +345,69 @@ export default function WorkshopLessonStudio({
   const audioContextRef = useRef(null);
   const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
 
-  // Sync state when activeLesson changes
-  useEffect(() => {
-    setCurrentScenarioIndex(0);
-    const scen = activeLesson.scenarios[0];
-    setLessonMessages([
+  // Handle Mode switching with greeting refresh
+  const handleModeChange = (newMode) => {
+    setWorkshopMode(newMode);
+    const newGreeting = createInstructorGreeting(newMode, activeLesson, activeScenario);
+    setLessonMessages(prev => [
+      ...prev,
       {
-        id: `coach-init-${Date.now()}`,
+        id: `mode-switch-${Date.now()}`,
         sender: 'coach',
-        text: `Welcome to **Lesson 0${activeLesson.number}: ${activeLesson.title}**!\n\nI'm Coach Marcus. In this drill, we eliminate bad habits and wire in high-leverage contractor phrasing.\n\n👉 **${scen.title}**\n*Jobsite Context:* ${scen.context}\n\nContractor says:\n> **"${scen.contractorLine}"**\n\n${scen.challenge}\n\nDeliver your response below via mic or text!`,
+        text: `🔄 **Switched to ${newMode === 'classroom' ? 'Classroom Drill' : newMode === 'copilot' ? 'Script Co-Pilot' : 'Simulated Call'} mode.**\n\n${newGreeting.text}`,
         score: null,
         correction: null
       }
     ]);
+  };
 
-    // If live audio was connected, disconnect it cleanly so new lesson instructions take effect
+  // Bridge action: Send script output directly into Script Builder module
+  const handleSendToScriptBuilder = () => {
+    const fullPitch = [
+      scriptDraftState.hook || "Hey Carl, Katy here. I know you're hauling materials down Route 60, but give me 20 seconds...",
+      scriptDraftState.pain || "Does handwriting quotes for 10 hours every Sunday and eating $1,200 on lost lumber scrap sound familiar?",
+      scriptDraftState.proof || "Works with zero cell service in the hollows—syncs straight into billing when you hit 4G.",
+      scriptDraftState.closingAsk || "Give me 10 minutes this Thursday. If it doesn't fit your crew, tell me to jump in the river. Fair?"
+    ].filter(Boolean).join('\n\n');
+
+    saveScriptToScriptsPage({
+      title: `Lesson 0${activeLesson.number} - Coach Marcus Co-Pilot Script`,
+      body: fullPitch,
+      notes: `Co-created with Coach Marcus Vance in Workshop Studio (${workshopMode} mode).`,
+      tags: ['workshop', 'marcus-co-pilot', activeLesson.tag]
+    });
+
+    navigate('/script-builder');
+  };
+
+  // Bridge action: Lock to Teleprompter / Active Script
+  const handleLockToTeleprompter = () => {
+    const fullPitch = [
+      scriptDraftState.hook || "Hey Carl, Katy here. I know you're hauling materials down Route 60, but give me 20 seconds...",
+      scriptDraftState.pain || "Does handwriting quotes for 10 hours every Sunday and eating $1,200 on lost lumber scrap sound familiar?",
+      scriptDraftState.proof || "Works with zero cell service in the hollows—syncs straight into billing when you hit 4G.",
+      scriptDraftState.closingAsk || "Give me 10 minutes this Thursday. If it doesn't fit your crew, tell me to jump in the river. Fair?"
+    ].filter(Boolean).join('\n\n');
+
+    try {
+      localStorage.setItem('scriptmaster_active_script', fullPitch);
+      window.dispatchEvent(new CustomEvent('scriptmaster_script_updated', {
+        detail: { script: fullPitch }
+      }));
+    } catch (e) {
+      console.warn('Failed to lock script to teleprompter:', e);
+    }
+
+    setAppliedToBoardToast(true);
+    setTimeout(() => setAppliedToBoardToast(false), 3500);
+  };
+
+  // Sync state when activeLesson changes
+  useEffect(() => {
+    setCurrentScenarioIndex(0);
+    const scen = activeLesson.scenarios[0];
+    setLessonMessages([createInstructorGreeting(workshopMode, activeLesson, scen)]);
+
     if (liveSessionRef.current) {
       try { liveSessionRef.current.disconnect(); } catch { /* ignore */ }
       liveSessionRef.current = null;
@@ -342,7 +426,7 @@ export default function WorkshopLessonStudio({
     };
   }, []);
 
-  // Toggle Bidirectional Gemini-3.8-Live Audio Session
+  // Toggle Bidirectional Gemini-2.0-Live Audio Session
   const handleToggleLiveAudio = async () => {
     setMicSandboxBlocked(false);
     setLiveAudioErrorMessage('');
@@ -362,14 +446,22 @@ export default function WorkshopLessonStudio({
     setLiveAudioStatus('connecting');
 
     try {
+      const modeInstruction = workshopMode === 'copilot'
+        ? `You are ${coachName}, an expert cold call script co-pilot and strategist. The user is co-writing and refining their contractor sales pitch for Lesson 0${activeLesson.number}: "${activeLesson.title}". Help them craft punchy 10-second hooks, visceral contractor pain points, offline proof, and low-friction closes. Speak concisely in 1-2 punchy sentences aloud, suggest strong phrasing, and refine with them line-by-line.`
+        : workshopMode === 'simulation'
+        ? `You are roleplaying Contractor Dave, on a windy metal tear-off roof in Kanawha Valley. The user is cold calling you. Your initial pushback: "${activeScenario.contractorLine}". Be gruff, direct, and test their frame. If they hesitate or sound like a timid telemarketer, cut them off. If they use a calm pattern interrupt with clear downside risk removal, hear them out.`
+        : `You are ${coachName}, an aggressive, practical, elite B2B Cold Calling Coach for blue-collar contractors. You are conducting an interactive live audio drill with the sales rep on Lesson 0${activeLesson.number}: "${activeLesson.title}". Current drill: "${activeScenario.title}". Contractor pushback: "${activeScenario.contractorLine}". When the user speaks, critique their downward inflection, pacing, and tone. Hold frame and train them to talk contractor-to-contractor without fluff.`;
+
+      const modeInitialPrompt = workshopMode === 'copilot'
+        ? `Coach Marcus, let's co-write and sharpen my sales pitch for Lesson 0${activeLesson.number}. Greet me and ask which section of the script we should construct first.`
+        : workshopMode === 'simulation'
+        ? `Deliver your opening contractor pushback to start the call: "${activeScenario.contractorLine}".`
+        : `Coach Marcus, please start the classroom drill now. Greet me aloud and state Scenario 1: "${activeScenario.title}" with contractor pushback: "${activeScenario.contractorLine}".`;
+
       const session = new GeminiLiveSession({
         voiceName: 'Fenrir',
-        initialPrompt: `Coach Marcus, please start the lesson now. Greet me aloud and state Scenario 1 to kick off the drill: "${activeScenario.title}" with contractor pushback: "${activeScenario.contractorLine}".`,
-        systemInstruction: `You are Coach Marcus Vance, aggressive, practical, elite B2B Cold Calling Coach for blue-collar contractors. You are conducting an interactive live audio drill with the sales rep on Lesson 0${activeLesson.number}: "${activeLesson.title}".
-Current drill: "${activeScenario.title}".
-Contractor persona pushback: "${activeScenario.contractorLine}".
-Challenge: ${activeScenario.challenge}.
-Act as Coach Marcus Vance and roleplay the contractor pushback. Speak concisely in 1-2 punchy sentences. When the user delivers their line, critique their tone, downward inflection, and wording instantly. Hold frame and train them to talk contractor-to-contractor without fluff. Keep replies concise and spoken-friendly.`,
+        initialPrompt: modeInitialPrompt,
+        systemInstruction: modeInstruction,
         onStateChange: (newState) => {
           setLiveAudioStatus(newState);
         },
@@ -388,6 +480,7 @@ Act as Coach Marcus Vance and roleplay the contractor pushback. Speak concisely 
             ]);
           }
         },
+        onToolCall: handleLiveCoachToolCall,
         onInterrupted: () => {
           setLiveTokens('');
           setLiveAudioStatus('listening');
@@ -586,7 +679,7 @@ OUTPUT STRICTLY AS JSON:
             evaluation = JSON.parse(response.text);
           }
         } catch (apiErr) {
-          console.warn('Direct gemini-3.8-flash call fallback:', apiErr);
+          console.warn('Direct Gemini flash call fallback:', apiErr);
         }
       }
 
@@ -666,6 +759,39 @@ OUTPUT STRICTLY AS JSON:
       console.warn('Lesson evaluation error:', err);
       setIsEvaluating(false);
     }
+  };
+
+  // Actions available to the live classroom coach. Results are returned to Gemini
+  // so Marcus can explain what he changed or found instead of merely claiming it.
+  const handleLiveCoachToolCall = async (toolName, args = {}) => {
+    if (toolName === 'saveScriptToScriptsPage' || toolName === 'saveScriptToLibrary') {
+      const result = await saveScriptToScriptsPage(args);
+      setAppliedToBoardToast(true);
+      setTimeout(() => setAppliedToBoardToast(false), 2500);
+      return result;
+    }
+    if (toolName === 'updateActiveScript') {
+      const next = { ...getActiveScript(), ...args };
+      localStorage.setItem('scriptmaster_active_script', JSON.stringify(next));
+      window.dispatchEvent(new Event('scriptmaster_script_updated'));
+      return { success: true, script: next, message: 'Updated the active script board.' };
+    }
+    if (toolName === 'pullUpScript') return pullUpScript(args.query);
+    if (toolName === 'openPracticeSession') return openPracticeSession(args);
+    if (toolName === 'researchProspect') {
+      const result = await researchProspectWithGemini(args);
+      return result || { success: false, message: 'Research endpoint returned no result.' };
+    }
+    if (toolName === 'navigateToPage') {
+      const destination = String(args.page || '').toLowerCase();
+      const route = destination.includes('practice') ? '/practice'
+        : destination.includes('record') ? '/recordings'
+        : destination.includes('script') ? '/saved-scripts'
+        : destination.includes('dashboard') ? '/dashboard' : '/coach';
+      navigate(route);
+      return { success: true, route, message: `Navigated to ${route}.` };
+    }
+    return { success: false, message: `Action ${toolName} is not available in this workspace.` };
   };
 
   // Next Scenario
@@ -774,7 +900,7 @@ OUTPUT STRICTLY AS JSON:
 
         {/* Lesson Switcher & Controls */}
         <div className="flex items-center gap-2">
-          {/* Gemini 3.8 Live Bidirectional Audio Toggle */}
+          {/* Gemini 2.0 Live Bidirectional Audio Toggle */}
           <button
             type="button"
             onClick={handleToggleLiveAudio}
@@ -785,7 +911,7 @@ OUTPUT STRICTLY AS JSON:
                 ? 'bg-amber-600/30 border-amber-500 text-amber-300 animate-pulse'
                 : 'bg-indigo-950/60 hover:bg-indigo-900/80 border-indigo-500/40 text-indigo-300 hover:text-white'
             }`}
-            title="Toggle bidirectional live audio drill with Marcus (gemini-3.8-live)"
+            title="Toggle bidirectional live audio drill with Coach (gemini-3.8-live)"
           >
             <Radio className={`w-3.5 h-3.5 ${isLiveAudioConnected ? 'text-white' : 'text-indigo-400'}`} />
             <span>
@@ -793,7 +919,7 @@ OUTPUT STRICTLY AS JSON:
                 ? 'Live Voice Active' 
                 : liveAudioStatus === 'connecting'
                 ? 'Connecting Voice...'
-                : 'Gemini-3.8-Live Voice'}
+                : 'Gemini-2.0-Live Voice'}
             </span>
           </button>
 
@@ -813,6 +939,21 @@ OUTPUT STRICTLY AS JSON:
               </button>
             ))}
           </div>
+
+          {/* Teleprompter Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setActiveTabSide(activeTabSide === 'teleprompter' ? 'replacements' : 'teleprompter')}
+            className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm ${
+              activeTabSide === 'teleprompter'
+                ? 'bg-indigo-600 text-white border-indigo-500 shadow-md'
+                : 'bg-slate-800 hover:bg-slate-750 text-slate-300 border-slate-700'
+            }`}
+            title="Toggle live script teleprompter"
+          >
+            <FileText className="w-3.5 h-3.5 text-indigo-300" />
+            <span>Teleprompter</span>
+          </button>
 
           {/* Mute Audio Toggle */}
           <button
@@ -845,6 +986,7 @@ OUTPUT STRICTLY AS JSON:
         
         {/* =========================================================================
             LEFT COLUMN: CURRICULUM SIDE PANEL (5 cols)
+            - Live Teleprompter (Script Reading & Live Edit)
             - Lethal Mistakes (Never Say)
             - High-Leverage Replacements (Say This Instead)
             - Live Feedback Notes & Script Blueprint Draft
@@ -852,43 +994,69 @@ OUTPUT STRICTLY AS JSON:
         <div className="lg:col-span-5 border-r border-slate-800 bg-[#080B14] p-5 flex flex-col gap-4 overflow-y-auto max-h-[700px]">
           
           {/* Side Panel Tab Navigator */}
-          <div className="grid grid-cols-3 gap-1 bg-slate-900 p-1 rounded-2xl border border-slate-800 text-xs font-bold">
-            <button
-              onClick={() => setActiveTabSide('mistakes')}
-              className={`py-2 px-2 rounded-xl text-center transition flex items-center justify-center gap-1.5 cursor-pointer ${
-                activeTabSide === 'mistakes'
-                  ? 'bg-rose-950/80 text-rose-300 border border-rose-600/40 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
-              <span>Never Say</span>
-            </button>
+          <div className={`${workshopMode === 'simulation' ? 'grid-cols-4' : 'grid-cols-3'} grid gap-1 bg-slate-900 p-1 rounded-2xl border border-slate-800 text-xs font-bold`}>
+            {workshopMode === 'simulation' && (
+              <button
+                onClick={() => setActiveTabSide('teleprompter')}
+                className={`py-2 px-1 rounded-xl text-center transition flex items-center justify-center gap-1 cursor-pointer ${
+                  activeTabSide === 'teleprompter'
+                    ? 'bg-indigo-950/80 text-indigo-300 border border-indigo-600/40 shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                <span className="truncate">Prompter</span>
+              </button>
+            )}
 
             <button
               onClick={() => setActiveTabSide('replacements')}
-              className={`py-2 px-2 rounded-xl text-center transition flex items-center justify-center gap-1.5 cursor-pointer ${
+              className={`py-2 px-1 rounded-xl text-center transition flex items-center justify-center gap-1 cursor-pointer ${
                 activeTabSide === 'replacements'
                   ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-600/40 shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Say This</span>
+              <span className="truncate">Say This</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTabSide('mistakes')}
+              className={`py-2 px-1 rounded-xl text-center transition flex items-center justify-center gap-1 cursor-pointer ${
+                activeTabSide === 'mistakes'
+                  ? 'bg-rose-950/80 text-rose-300 border border-rose-600/40 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+              <span className="truncate">Never Say</span>
             </button>
 
             <button
               onClick={() => setActiveTabSide('notes')}
-              className={`py-2 px-2 rounded-xl text-center transition flex items-center justify-center gap-1.5 cursor-pointer ${
+              className={`py-2 px-1 rounded-xl text-center transition flex items-center justify-center gap-1 cursor-pointer ${
                 activeTabSide === 'notes'
                   ? 'bg-indigo-950/80 text-indigo-300 border border-indigo-600/40 shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
               <Layers className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Live Notes</span>
+              <span className="truncate">Notes</span>
             </button>
           </div>
+
+          {/* TAB 0: LIVE TELEPROMPTER */}
+          {workshopMode === 'simulation' && activeTabSide === 'teleprompter' && (
+            <div className="h-[600px] animate-fadeIn">
+              <PracticeTeleprompter
+                onInsertText={(text) => {
+                  setUserSpeechInput(prev => prev ? `${prev} ${text}` : text);
+                }}
+                className="h-full"
+              />
+            </div>
+          )}
 
           {/* TAB 1: LETHAL MISTAKES (NEVER SAY) */}
           {activeTabSide === 'mistakes' && (
@@ -1079,6 +1247,114 @@ OUTPUT STRICTLY AS JSON:
             </div>
           </div>
 
+          {/* =========================================================================
+              3-WAY STUDIO MODE SWITCHER & SCRIPT CO-PILOT ACTIONS
+             ========================================================================= */}
+          <div className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => handleModeChange('classroom')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    workshopMode === 'classroom'
+                      ? 'bg-indigo-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>Classroom Drill</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleModeChange('copilot')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    workshopMode === 'copilot'
+                      ? 'bg-purple-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Wand2 className="w-3.5 h-3.5 text-purple-300" />
+                  <span>Script Co-Pilot</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleModeChange('simulation')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    workshopMode === 'simulation'
+                      ? 'bg-amber-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <PhoneCall className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Simulated Call</span>
+                </button>
+              </div>
+
+              {/* Script Builder Bridge & Teleprompter Lock */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSendToScriptBuilder}
+                  className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-purple-600/20 transition cursor-pointer"
+                  title="Export coaching script directly into Script Builder module"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Send to Script Builder</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleLockToTeleprompter}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 hover:border-slate-600 text-slate-200 hover:text-white font-bold text-xs flex items-center gap-1.5 transition cursor-pointer"
+                  title="Lock current pitch draft into Active Teleprompter"
+                >
+                  <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Lock to Teleprompter</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Drafting Pills in Script Co-Pilot Mode */}
+            {workshopMode === 'copilot' && (
+              <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center gap-1.5 animate-fadeIn">
+                <span className="text-[10px] font-black uppercase text-purple-400 mr-1 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3" /> Quick Prompts:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setUserSpeechInput("Hey Carl, Katy here. I know you're hauling materials down Route 60, but give me 20 seconds: if this doesn't stop you eating $1,200 on plumbing runs, tell me to jump in the river. Fair?")}
+                  className="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-purple-950/60 border border-slate-700/60 hover:border-purple-500/50 text-[11px] text-slate-300 hover:text-purple-200 transition cursor-pointer"
+                >
+                  🎯 10s Hook
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUserSpeechInput("Does handwriting quotes for 10 hours every Sunday and eating $1,200 on lost lumber scrap notes sound familiar?")}
+                  className="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-purple-950/60 border border-slate-700/60 hover:border-purple-500/50 text-[11px] text-slate-300 hover:text-purple-200 transition cursor-pointer"
+                >
+                  💥 Bleeding-Neck Pain
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUserSpeechInput("Works with zero cell service in the hollows—syncs straight into billing when you hit 4G.")}
+                  className="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-purple-950/60 border border-slate-700/60 hover:border-purple-500/50 text-[11px] text-slate-300 hover:text-purple-200 transition cursor-pointer"
+                >
+                  🛠️ Offline Proof
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUserSpeechInput("Give me 10 minutes this Thursday. If it doesn't fit your crew, tell me to jump in the river. Fair?")}
+                  className="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-purple-950/60 border border-slate-700/60 hover:border-purple-500/50 text-[11px] text-slate-300 hover:text-purple-200 transition cursor-pointer"
+                >
+                  🤝 10-Min Audit Close
+                </button>
+              </div>
+            )}
+          </div>
+
           {/* Standalone Launch Prompt for Sandbox Issues */}
           {micSandboxBlocked && (
             <div className="p-3.5 rounded-2xl bg-amber-950/70 border border-amber-500/80 text-amber-200 text-xs flex flex-wrap items-center justify-between gap-3 shadow-lg animate-fadeIn">
@@ -1145,7 +1421,7 @@ OUTPUT STRICTLY AS JSON:
                 </div>
 
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {isLiveAudioConnected && (
                       <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
                     )}
@@ -1156,8 +1432,16 @@ OUTPUT STRICTLY AS JSON:
                         ? 'Connecting Real-Time Audio...'
                         : 'Interactive Gemini Live Voice Call'}
                     </span>
-                    <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-mono font-bold">
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono font-bold flex items-center gap-1">
+                      <Radio className="w-2.5 h-2.5" />
                       models/gemini-3.8-live
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-mono">
+                      &lt;35ms latency • PCM 16k In / 24k Out
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-extrabold flex items-center gap-1">
+                      <Zap className="w-2.5 h-2.5 text-amber-400" />
+                      Interruption Ready (Barge-in Enabled)
                     </span>
                   </div>
 

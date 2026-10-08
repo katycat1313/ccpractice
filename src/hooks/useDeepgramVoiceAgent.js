@@ -90,7 +90,7 @@ export const useDeepgramVoiceAgent = () => {
       });
       mediaStreamRef.current = stream;
 
-      const ws = new WebSocket(`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`);
+      const ws = new WebSocket(`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`);
       wsRef.current = ws;
 
       const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
@@ -160,7 +160,7 @@ export const useDeepgramVoiceAgent = () => {
 class GeminiVoiceAgentProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.bufferSize = 2048;
+    this.bufferSize = 1024;
     this.buffer = new Float32Array(this.bufferSize);
     this.bytesWritten = 0;
   }

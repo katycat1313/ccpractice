@@ -11,6 +11,7 @@ import {
   Edit3, 
   RotateCcw, 
   ChevronDown, 
+  ChevronUp,
   X, 
   CheckCircle2, 
   Sparkles, 
@@ -23,13 +24,22 @@ import {
   Zap,
   FolderOpen,
   Play,
-  ArrowRight
+  ArrowRight,
+  Copy,
+  Check,
+  Shield,
+  Flame,
+  Target,
+  Lightbulb,
+  Compass
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import IframeMicModal from '../components/IframeMicModal';
+import LiveSpeechFeedback from '../components/LiveSpeechFeedback';
+import LivePhraseOverlay from '../components/LivePhraseOverlay';
 import { playTelephoneRing, playPickupClick, playHangupClick } from '../lib/soundUtils';
-import { askGeminiCoach, getGeminiTTSAudio, getGeminiApiKey } from '../lib/geminiClient';
-import { getCoachMemory, extractMemoryFromInput, generateMemoryAwareFallback } from '../lib/coachMemory';
+import { askGeminiCoach, getGeminiTTSAudio, getGeminiApiKey, researchProspectWithGemini } from '../lib/geminiClient';
+import { getCoachMemory, extractMemoryFromInput, generateMemoryAwareFallback, formatMemoryForPrompt } from '../lib/coachMemory';
 import { getCustomProspects, getSelectedProspectId, setSelectedProspectId } from '../lib/prospectManager';
 import { saveRecording, formatSeconds } from '../lib/recordingsService';
 import { 
@@ -42,10 +52,21 @@ import {
   BUILTIN_TEMPLATES
 } from '../lib/coachActions';
 import { GoogleGenAI } from '@google/genai';
+import { getLearningProgress, LESSON_PATH, recordLearningTurn } from '../lib/learningProgress';
+import { getAdaptiveDifficulty } from '../lib/trainingProgress';
 
 const SCRIPT_TEMPLATES = BUILTIN_TEMPLATES;
+const COACH_CONVERSATION_STORAGE_KEY = 'scriptmaster_coach_messages_v2';
 
-export default function CoachPage({ setScript: setGlobalScript }) {
+function extractCoachLine(text, fallback = '') {
+  if (!text) return fallback;
+  const quoted = text.match(/[“\"]([^”\"]{12,})[”\"]/);
+  if (quoted?.[1]) return quoted[1].trim();
+  const directed = text.match(/(?:say|repeat|try this|use this|your line)\s*[:\-]\s*(.+?)(?:\n|$)/i);
+  return directed?.[1]?.replace(/^['“]|['”]$/g, '').trim() || fallback;
+}
+
+export default function CoachPage({ setScript: setGlobalScript, embedded = false, active = true }) {
   const navigate = useNavigate();
 
   // Prospect State
@@ -64,6 +85,7 @@ export default function CoachPage({ setScript: setGlobalScript }) {
 
   // Action status toast
   const [actionToast, setActionToast] = useState(null);
+  const [researchResult, setResearchResult] = useState(null);
   const showActionToast = (msg) => {
     setActionToast(msg);
     setTimeout(() => setActionToast(null), 3500);
@@ -102,13 +124,34 @@ export default function CoachPage({ setScript: setGlobalScript }) {
   // Audio / Speech
   const [isAgentMuted, setIsAgentMuted] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [liveMicState, setLiveMicState] = useState('disconnected');
+  const [micError, setMicError] = useState(null);
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
+  const [voiceError, setVoiceError] = useState(null);
+  const [liveSpeechText, setLiveSpeechText] = useState('');
+  const [coachTargetLine, setCoachTargetLine] = useState('');
+  const [liveSpeechMetrics, setLiveSpeechMetrics] = useState({ wpm: 0, pace: 'steady', pitch: 'neutral', pitchLabel: 'Measuring', toneLabel: 'Keep it conversational' });
   const [coachMemory, setCoachMemory] = useState(() => getCoachMemory());
+  const liveSessionRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const micStreamRef = useRef(null);
+
+  useEffect(() => {
+    if (!active && liveSessionRef.current) {
+      try { liveSessionRef.current.stop(); } catch (_) {}
+      liveSessionRef.current = null;
+      setIsListening(false);
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (_) {}
+        recognitionRef.current = null;
+      }
+    }
+  }, [active]);
 
   // Conversation Messages
   const [messages, setMessages] = useState(() => {
     try {
-      const saved = localStorage.getItem('scriptmaster_coach_messages');
+      const saved = localStorage.getItem(COACH_CONVERSATION_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -120,12 +163,23 @@ export default function CoachPage({ setScript: setGlobalScript }) {
   const [inputText, setInputText] = useState('');
   const [isThinking, setIsThinking] = useState(false);
 
+  // Dedicated Script Part Builder & Strategy Brainstorm State
+  const [selectedScriptPart, setSelectedScriptPart] = useState('hook'); // 'hook' | 'problem' | 'value' | 'closingAsk' | 'rebuttal' | 'strategy'
+  const [partBuilderInput, setPartBuilderInput] = useState('');
+  const [isBuilderDockOpen, setIsBuilderDockOpen] = useState(true);
+  const [copiedPartKey, setCopiedPartKey] = useState(null);
+
   // References
   const timerRef = useRef(null);
   const chatContainerRef = useRef(null);
   const activeAudioRef = useRef(null);
   const recognitionRef = useRef(null);
-  const hasSpokenInitialRef = useRef(false);
+  const recognitionCommitTimerRef = useRef(null);
+  const lineRequestPendingRef = useRef(false);
+  const speechStartedAtRef = useRef(null);
+  const pitchBaselineRef = useRef([]);
+  const audioSpeechSeenRef = useRef(false);
+  const sessionStartedAtRef = useRef(0);
 
   // Load Prospects
   useEffect(() => {
@@ -151,7 +205,7 @@ export default function CoachPage({ setScript: setGlobalScript }) {
   // Save messages
   useEffect(() => {
     if (messages.length > 0) {
-      localStorage.setItem('scriptmaster_coach_messages', JSON.stringify(messages.slice(-50)));
+      localStorage.setItem(COACH_CONVERSATION_STORAGE_KEY, JSON.stringify(messages.slice(-50)));
     }
   }, [messages]);
 
@@ -171,9 +225,9 @@ export default function CoachPage({ setScript: setGlobalScript }) {
     const userName = memory.userName || (user.name && user.name !== 'Sales Rep' ? user.name.split(' ')[0] : 'there');
     const userProduct = memory.productOrService || user.whatISell || 'your product';
 
-    const greetingText = `Hey ${userName}! Ready to practice your pitch for **${userProduct}**?\n\nToggle **"View Script"** to peek at your 20-second hook, then tap the center button whenever you're ready to dial ${selectedProspect?.name || "Carl 'Mac' McIntyre"}.`;
-    const spokenGreeting = `Hey ${userName}! Tap the record button whenever you're ready to practice dialing ${selectedProspect?.name || "Carl 'Mac' McIntyre"}.`;
-
+    const progress = getLearningProgress();
+    const lesson = LESSON_PATH.find((item) => item.id === progress.currentLessonId) || LESSON_PATH[0];
+    const greetingText = `Welcome, ${userName}. I’m your Coach. We’ll start with the fundamentals, talk through the ideas together, and only move into a practice call when you’re ready.\n\nToday we’re working on **${lesson.title}**. First I’ll learn what you already know, then I’ll explain one concept, ask you to apply it, and adjust the difficulty based on your response.\n\nTell me: what do you currently believe makes a cold-call opening effective?`;
     const initMsg = {
       id: `init-${Date.now()}`,
       speaker: 'Coach',
@@ -184,10 +238,10 @@ export default function CoachPage({ setScript: setGlobalScript }) {
 
     setMessages([initMsg]);
 
-    if (!hasSpokenInitialRef.current) {
-      hasSpokenInitialRef.current = true;
-      speakSpeech(spokenGreeting, 'marcus');
-    }
+    // Do not auto-play a second greeting here. Gemini Live sends the single
+    // live greeting when its session connects; automatic TTS at mount caused
+    // two voices to speak over each other. The Hear Coach button remains the
+    // intentional replay path.
   }, [selectedProspect]);
 
   // Speech Helper
@@ -211,6 +265,7 @@ export default function CoachPage({ setScript: setGlobalScript }) {
     window.speechSynthesis?.cancel();
 
     setIsAgentSpeaking(true);
+    setVoiceError(null);
 
     try {
       const voiceId = persona === 'hank' ? 'Charon' : 'Fenrir';
@@ -220,12 +275,34 @@ export default function CoachPage({ setScript: setGlobalScript }) {
       if (ttsRes && ttsRes.audioBase64) {
         const audio = new Audio(`data:${ttsRes.mimeType || 'audio/wav'};base64,${ttsRes.audioBase64}`);
         activeAudioRef.current = audio;
-        audio.onended = () => setIsAgentSpeaking(false);
-        audio.onerror = () => fallbackBrowserSpeak(cleanText, gender);
+        audio.onended = () => {
+          activeAudioRef.current = null;
+          setIsAgentSpeaking(false);
+        };
+        audio.onerror = () => {
+          activeAudioRef.current = null;
+          setIsAgentSpeaking(false);
+          setVoiceError('Coach audio could not be decoded. Click Hear Coach to retry.');
+        };
+        audio.preload = 'auto';
+        audio.load();
         await audio.play();
         return;
       }
-    } catch (_) {}
+    } catch (error) {
+      // Chrome rejects autoplay when the greeting runs during page mount. Keep
+      // that failure visible and let the explicit Hear Coach button retry from
+      // a user gesture instead of silently swallowing it.
+      setIsAgentSpeaking(false);
+      const message = error?.name === 'NotAllowedError'
+        ? 'Chrome blocked automatic playback. Click Hear Coach once to start audio.'
+        : 'Coach voice is unavailable right now. Click Hear Coach to retry.';
+      setVoiceError(message);
+      if (error?.name !== 'NotAllowedError') {
+        fallbackBrowserSpeak(cleanText, gender);
+      }
+      return;
+    }
 
     fallbackBrowserSpeak(cleanText, persona === 'sarah' || persona === 'elena' ? 'female' : 'male');
   };
@@ -251,54 +328,276 @@ export default function CoachPage({ setScript: setGlobalScript }) {
     }
   };
 
-  // Mic toggle
-  const toggleMic = () => {
+  // Mic toggle with AudioContext, getUserMedia, and Deepgram/SpeechRecognition fallback
+  const toggleMic = async () => {
     if (isInIframe) {
       setIsIframeMicModalOpen(true);
       return;
     }
 
+    // Use the real session state as the source of truth. During Gemini Live
+    // thinking/speaking, isListening can briefly be false; starting another
+    // session in that window caused overlapping coaches and multiple voices.
+    const existingSession = liveSessionRef.current;
+    const connectingTooLong = existingSession?.state === 'connecting' &&
+      Date.now() - sessionStartedAtRef.current > 3000;
+    const existingSessionIsActive = existingSession &&
+      (['connected', 'listening', 'thinking', 'speaking'].includes(existingSession.state) ||
+        (existingSession.state === 'connecting' && !connectingTooLong));
+
+    // A stopped/error session can remain in the ref after Gemini closes the
+    // socket. Clear that stale ref so the next click starts a fresh session.
+    if (existingSession && (!existingSessionIsActive || connectingTooLong)) {
+      try { existingSession.stop(); } catch (_) {}
+      liveSessionRef.current = null;
+    } else if (existingSessionIsActive) {
+      try { existingSession.stop(); } catch (_) {}
+      liveSessionRef.current = null;
+      setIsListening(false);
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (_) {}
+        recognitionRef.current = null;
+      }
+      if (recognitionCommitTimerRef.current) {
+        clearTimeout(recognitionCommitTimerRef.current);
+        recognitionCommitTimerRef.current = null;
+      }
+      return;
+    }
+
     if (isListening) {
+      if (liveSessionRef.current) {
+        try { liveSessionRef.current.stop(); } catch (_) {}
+        liveSessionRef.current = null;
+      }
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch (_) {}
       }
+      if (recognitionCommitTimerRef.current) {
+        clearTimeout(recognitionCommitTimerRef.current);
+        recognitionCommitTimerRef.current = null;
+      }
+      if (micStreamRef.current) {
+        try { micStreamRef.current.getTracks().forEach((track) => track.stop()); } catch (_) {}
+        micStreamRef.current = null;
+      }
       setIsListening(false);
+      setMicError(null);
       return;
     }
 
-    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRec) {
-      setIsIframeMicModalOpen(true);
-      return;
+    setMicError(null);
+      setLiveSpeechText('');
+      setCoachTargetLine('');
+      lineRequestPendingRef.current = false;
+      audioSpeechSeenRef.current = false;
+    setLiveSpeechMetrics({ wpm: 0, pace: 'steady', pitch: 'neutral', pitchLabel: 'Measuring', toneLabel: 'Keep it conversational' });
+    speechStartedAtRef.current = null;
+    pitchBaselineRef.current = [];
+
+    // If the user just pressed Hear Coach, stop that one-shot TTS before
+    // opening Gemini Live. Otherwise the TTS greeting and Live greeting can
+    // overlap and sound like two coaches.
+    if (activeAudioRef.current) {
+      try { activeAudioRef.current.pause(); } catch (_) {}
+      activeAudioRef.current = null;
+    }
+    if (typeof window !== 'undefined') {
+      window.speechSynthesis?.cancel();
     }
 
     try {
-      const recognition = new SpeechRec();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = 'en-US';
+      // Request once from the click gesture, then pass this exact stream to
+      // Gemini Live. Never create a second microphone stream for one session.
+      micStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Reflect the real microphone permission immediately. Waiting for the
+      // WebSocket handshake made the control appear OFF even with a live mic.
+      setLiveMicState('connecting');
+      setIsListening(true);
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        audioContextRef.current = audioContextRef.current || new AudioCtx();
+        await audioContextRef.current.resume?.();
+      }
+    } catch (error) {
+      setMicError(error?.message || 'Permission to access microphone denied by user.');
+      return;
+    }
 
-      recognition.onstart = () => setIsListening(true);
-      recognition.onresult = (e) => {
-        const transcript = e.results[0][0].transcript;
-        if (transcript) handleSendMessage(transcript);
-      };
-      recognition.onerror = (e) => {
-        setIsListening(false);
-        if (isInIframe || e?.error === 'not-allowed') {
+    // Gemini Live is the primary microphone/conversation path. It owns
+    // capture, turn detection, transcription, and spoken responses. Do not
+    // treat a provider/agent ID as a connection; start the actual session.
+    try {
+      const { GeminiLiveSession, MARCUS_CLASSROOM_INSTRUCTOR_PROMPT } = await import('../lib/geminiLiveClient');
+      const currentProgress = getLearningProgress();
+      const currentLesson = LESSON_PATH.find((item) => item.id === currentProgress.currentLessonId) || LESSON_PATH[0];
+      const liveMemoryContext = `\n\nPERSISTED STUDENT MEMORY (continue from this; do not ask the student to repeat it):\n${formatMemoryForPrompt(coachMemory) || 'No saved product details yet.'}`;
+      const liveScriptContext = `\n\nSAVED SCRIPT CONTEXT (background only; do not automatically pull these old lines into the lesson):\n- Target: ${selectedProspect?.name || activeScript?.target || 'selected contractor'}\n- Product/value context: ${activeScript?.value || activeScript?.painValue?.value || ''}\nRULE: At the beginner/guided stage, Coach must choose the exact expert line; never ask the student how to say it. State the line in quotation marks so the floating Coach's Line display can pull it up. Do not display or reuse an old saved hook unless the student explicitly asks to practice that saved script. Do not overwrite the saved script unless the student explicitly asks to save a revision. If the student corrects the business, says they are not selling something, asks a question, or says the line is wrong, treat that as a conversation turn—not a rehearsal attempt—and respond to the correction before continuing.`;
+      const session = new GeminiLiveSession({
+        voiceName: 'Fenrir',
+        micStream: micStreamRef.current,
+        systemInstruction: `${MARCUS_CLASSROOM_INSTRUCTOR_PROMPT}${liveMemoryContext}${liveScriptContext}`,
+        initialPrompt: `Begin the student's current lesson: ${currentLesson.title} (${currentLesson.id}). Their learning stage is ${currentProgress.stage}, with ${currentProgress.baselineTurns} prior learning turns and ${currentProgress.completedLessons.length} completed lessons. The student sells ${coachMemory.productOrService || 'the product they previously described'}${coachMemory.offerOptions?.length ? ` with these offer options: ${coachMemory.offerOptions.join(', ')}` : ''}. Continue from this saved progress; do not reset to Lesson 1 and do not ask them to re-enter product details. Explain one concept, ask one question, and wait for their answer before advancing.`,
+        onStateChange: (state) => {
+          setLiveMicState(state);
+          setIsListening(['connecting', 'connected', 'listening', 'thinking', 'speaking'].includes(state));
+          if (state === 'error') setMicError('Coach microphone connected, but Gemini Live could not start. Click Mic to retry.');
+        },
+        onUserSpeechChunk: ({ pitchHz, confidence }) => {
+          audioSpeechSeenRef.current = true;
+          setMicError(null);
+          if (pitchHz > 0 && confidence >= 0.65) {
+            const samples = pitchBaselineRef.current;
+            if (samples.length < 20) samples.push(pitchHz);
+            const baseline = samples.length ? samples.reduce((sum, value) => sum + value, 0) / samples.length : pitchHz;
+            const pitch = pitchHz > baseline * 1.22 ? 'high' : pitchHz < baseline * 0.82 ? 'grounded' : 'neutral';
+            setLiveSpeechMetrics(prev => ({ ...prev, pitch, pitchLabel: `${Math.round(pitchHz)} Hz • ${pitch === 'high' ? 'rising/high' : pitch === 'grounded' ? 'grounded' : 'near your baseline'}` }));
+          }
+        },
+        onTextToken: (_token, fullText) => {
+          const line = extractCoachLine(fullText, '');
+          if (line) {
+            lineRequestPendingRef.current = false;
+            setCoachTargetLine(line);
+          }
+        },
+        onToolCall: async (actionName, args = {}) => {
+          const summary = executeCoachAction(actionName, args);
+          const pulledLine = args.hook || args.problem || args.value || args.closingAsk || args.response;
+          if (pulledLine) setCoachTargetLine(pulledLine);
+          return { success: true, message: summary || 'The requested coaching line is now on the active board.' };
+        },
+        onTurnComplete: (coachText) => {
+          setLiveSpeechText('');
+          speechStartedAtRef.current = null;
+          const coachedLine = extractCoachLine(coachText, '');
+          if (coachedLine) {
+            lineRequestPendingRef.current = false;
+            setCoachTargetLine(coachedLine);
+          } else if (!lineRequestPendingRef.current && liveSessionRef.current) {
+            // AUDIO-only Live responses can omit text/tool output. Force one
+            // explicit line request so the visual teleprompter never claims a
+            // line was pulled up without actually receiving one.
+            lineRequestPendingRef.current = true;
+            liveSessionRef.current.sendTextMessage('Stop and provide exactly one expert sentence for the student to say now. Put only the exact line in quotation marks. Do not ask the student what they want to say.');
+          }
+          if (!coachText?.trim()) return;
+          const coachMsg = {
+            id: `live-coach-${Date.now()}`,
+            speaker: 'Coach',
+            name: 'Marcus (AI Coach)',
+            text: coachText.trim(),
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          };
+          setMessages(prev => [...prev, coachMsg]);
+        },
+        onError: (error) => {
+          setIsListening(false);
+          setMicError(error?.message || 'Gemini Live could not connect.');
+        },
+        onIframeMicBlocked: () => {
+          setIsListening(false);
           setIsIframeMicModalOpen(true);
         }
-      };
-      recognition.onend = () => setIsListening(false);
+      });
 
-      recognitionRef.current = recognition;
-      recognition.start();
-    } catch (_) {
+      // Register before starting: Gemini can emit setup/greeting messages
+      // asynchronously during start(). Callbacks must see the live session
+      // immediately so turn commits and line requests are not dropped.
+      liveSessionRef.current = session;
+      sessionStartedAtRef.current = Date.now();
+      // Do not await startup before starting browser recognition: awaiting
+      // getUserMedia/WebSocket setup loses Chrome's direct click gesture.
+      session.start().catch((error) => {
+        setLiveMicState('error');
+        setIsListening(false);
+        setMicError(error?.message || 'Gemini Live could not start. Click Mic to retry.');
+      });
+
+      // Gemini owns the audio conversation. Browser recognition mirrors the
+      // student's words visually so they can compare delivery to the Coach's script.
+      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRec) {
+        try {
+          const recognition = new SpeechRec();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = 'en-US';
+          recognition.onresult = (event) => {
+            // Continuous recognition retains previous final results. Render
+            // only the current segment so each speaking turn starts clean.
+            const clean = event.results[event.results.length - 1]?.[0]?.transcript?.trim() || '';
+            const words = clean ? clean.split(/\s+/).filter(Boolean) : [];
+            if (clean && !speechStartedAtRef.current) speechStartedAtRef.current = performance.now();
+            const minutes = speechStartedAtRef.current ? Math.max((performance.now() - speechStartedAtRef.current) / 60000, 1 / 60) : 1 / 60;
+            const wpm = Math.round(words.length / minutes);
+            setLiveSpeechText(clean);
+            setLiveSpeechMetrics(prev => ({
+              ...prev,
+              wpm,
+              pace: wpm > 175 ? 'rushed' : wpm > 0 && wpm < 105 ? 'slow' : 'steady',
+              toneLabel: wpm > 175 ? 'Slow down; add a pause' : wpm < 105 && wpm > 0 ? 'Add forward energy' : 'Conversational pace'
+            }));
+            const latestResult = event.results[event.results.length - 1];
+            if (latestResult?.isFinal && liveSessionRef.current) {
+              if (recognitionCommitTimerRef.current) clearTimeout(recognitionCommitTimerRef.current);
+            recognitionCommitTimerRef.current = setTimeout(() => {
+                if (audioSpeechSeenRef.current) {
+                  liveSessionRef.current?.commitUserTurn();
+                } else if (clean && liveSessionRef.current) {
+                  // Chrome heard the phrase, but Gemini's audio VAD did not.
+                  // Send the recognized turn as text so Coach still responds.
+                  liveSessionRef.current.sendTextMessage(clean);
+                }
+                audioSpeechSeenRef.current = false;
+                recognitionCommitTimerRef.current = null;
+              }, 700);
+            }
+          };
+          recognition.onerror = (event) => {
+            const reason = event?.error || 'speech recognition unavailable';
+            setMicError(`Microphone audio is allowed, but live word capture failed (${reason}). You can still use Send Reply to commit a turn.`);
+          };
+          recognition.onend = () => {
+            // Chrome may end continuous recognition after a pause. Restart it
+            // while the same Coach session is still active.
+            if (liveSessionRef.current && liveSessionRef.current.state !== 'disconnected' && recognitionRef.current === recognition) {
+              try { recognition.start(); } catch (_) {}
+            }
+          };
+          recognition.start();
+          recognitionRef.current = recognition;
+        } catch (_) {}
+      }
+    } catch (error) {
+      if (micStreamRef.current) {
+        try { micStreamRef.current.getTracks().forEach((track) => track.stop()); } catch (_) {}
+        micStreamRef.current = null;
+      }
+      liveSessionRef.current = null;
+      setLiveMicState('error');
       setIsListening(false);
-      if (isInIframe) {
-        setIsIframeMicModalOpen(true);
+      setMicError(error?.message || 'Gemini Live could not start. Click Mic to retry.');
+      // Keep the local test/browser fallback available if the Live module is
+      // unavailable; production uses Gemini Live first and reports its error.
+      if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'test') {
+        const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRec) {
+          const recognition = new SpeechRec();
+          recognition.start();
+          recognitionRef.current = recognition;
+          setIsListening(true);
+        }
       }
     }
+  };
+
+  const commitLiveReply = () => {
+    if (!liveSessionRef.current) {
+      setMicError('Start Coach Mic before sending a spoken reply.');
+      return;
+    }
+    liveSessionRef.current.commitUserTurn();
   };
 
   // Start Call
@@ -377,6 +676,34 @@ export default function CoachPage({ setScript: setGlobalScript }) {
     const safeArgs = args || {};
 
     switch (actionName) {
+      case 'researchProspect': {
+        summary = `Researching ${safeArgs.companyName || safeArgs.query || 'the target business'}...`;
+        showActionToast(summary);
+        researchProspectWithGemini(safeArgs).then((result) => {
+          if (result) {
+            setResearchResult(result);
+            const researchedScript = result.branchingScript || {};
+            const personalizedUpdates = {
+              ...(researchedScript.opener ? { hook: researchedScript.opener } : {}),
+              ...(result.bleedingNeckPain ? { problem: result.bleedingNeckPain } : {}),
+              ...(researchedScript.painHook ? { painValue: { problem: researchedScript.painHook } } : {}),
+              ...(researchedScript.closingAsk ? { closingAsk: researchedScript.closingAsk } : {})
+            };
+            if (Object.keys(personalizedUpdates).length > 0) {
+              const nextScript = { ...activeScript, ...personalizedUpdates };
+              setActiveScript(nextScript);
+              localStorage.setItem('scriptmaster_active_script', JSON.stringify(nextScript));
+              localStorage.setItem('scriptmaster_active_script_timestamp', Date.now().toString());
+              window.dispatchEvent(new Event('scriptmaster_script_updated'));
+              if (setGlobalScript) setGlobalScript(nextScript);
+            }
+            showActionToast('Research complete: pain points and qualification angles are ready.');
+          } else {
+            showActionToast('Research could not be completed. Check the business details and try again.');
+          }
+        }).catch(() => showActionToast('Research could not be completed.'));
+        break;
+      }
       case 'saveScriptToScriptsPage':
       case 'saveScript':
       case 'saveScriptToLibrary': {
@@ -567,6 +894,9 @@ export default function CoachPage({ setScript: setGlobalScript }) {
 
     const updatedMem = extractMemoryFromInput(text, coachMemory);
     setCoachMemory(updatedMem);
+    const learningProgress = getLearningProgress();
+    const adaptiveDifficulty = getAdaptiveDifficulty();
+    const activeScriptContext = `\nACTIVE SCRIPT TO KEEP CONSISTENT WITH THE TELEPROMPTER:\n${JSON.stringify({ hook: activeScript?.hook, problem: activeScript?.problem || activeScript?.painValue?.problem, value: activeScript?.value || activeScript?.painValue?.value, closingAsk: activeScript?.closingAsk })}\nUse these exact lines when telling the student what to say; propose a script update instead of silently substituting a different line.\nPERSISTED STUDENT MEMORY:\n${formatMemoryForPrompt(updatedMem)}\nSCRIPT AUTHORING RULE: If the student asks you to create, rewrite, improve, or replace a pitch, author the exact verbatim line yourself and call updateActiveScript immediately. If the student says the current line is bad, replace it in the active script and teleprompter instead of repeating it.`;
 
     const userMsg = {
       id: `usr-${Date.now()}`,
@@ -732,12 +1062,12 @@ CRITICAL RULES:
       return;
     }
 
-    // Action 5: Build / Inject Handled Script
+    // Action 5: Explicitly Reset / Load Default Handled Script Template
     if (
-      lowerText.includes('handled') || 
-      lowerText.includes('route 60') || 
-      (lowerText.includes('build') && (lowerText.includes('script') || lowerText.includes('pitch'))) ||
-      (lowerText.includes('create') && (lowerText.includes('script') || lowerText.includes('pitch')))
+      lowerText.includes('load handled template') ||
+      lowerText.includes('reset to handled') ||
+      lowerText.includes('load default template') ||
+      lowerText.includes('load default script')
     ) {
       const handledTpl = BUILTIN_TEMPLATES[0];
       const summary = executeCoachAction('updateActiveScript', handledTpl);
@@ -777,7 +1107,7 @@ CRITICAL RULES:
               }
             ],
             config: {
-              systemInstruction: COACH_SYSTEM_PROMPT_ENHANCED,
+              systemInstruction: `${COACH_SYSTEM_PROMPT_ENHANCED}\n\nADAPTIVE CURRICULUM RULES:\n- Current lesson: ${learningProgress.currentLessonId}.\n- Stage: ${learningProgress.stage}.\n- Baseline turns completed: ${learningProgress.baselineTurns}.\n- Start with explanation and discussion; do not send the user into a prospect call unless they ask or demonstrate readiness.\n- Ask one question at a time, evaluate the answer, and recommend repeat, advance, or practice explicitly.\n- Teach business research hands-on: find credible public information, separate facts from hypotheses, identify likely operational pain points, and prepare respectful personalization.\n- Teach both research-before-call and live qualification. Turn findings into diagnostic questions, verify assumptions on the call, and update the active contractor script with confirmed pain rather than guesses.${activeScriptContext}`,
               temperature: 0.7,
               tools: [{ functionDeclarations: COACH_ALL_WHITELISTED_TOOLS }]
             }
@@ -803,7 +1133,7 @@ CRITICAL RULES:
       // Backend route fallback
       if (!replyText) {
         const response = await askGeminiCoach({
-          systemPrompt: COACH_SYSTEM_PROMPT_ENHANCED,
+          systemPrompt: `${COACH_SYSTEM_PROMPT_ENHANCED}\n\nADAPTIVE CURRICULUM RULES:\n- Current lesson: ${learningProgress.currentLessonId}.\n- Stage: ${learningProgress.stage}.\n- Baseline turns completed: ${learningProgress.baselineTurns}.\n- Current adaptive difficulty: ${adaptiveDifficulty.level}; ${adaptiveDifficulty.help}.\n- Start with explanation and discussion; do not send the user into a prospect call unless they ask or demonstrate readiness.\n- Ask one question at a time, evaluate the answer, and recommend repeat, advance, or practice explicitly.\n- Teach business research hands-on: find credible public information, separate facts from hypotheses, identify likely operational pain points, and prepare respectful personalization.\n- Teach both research-before-call and live qualification. Turn findings into diagnostic questions, verify assumptions on the call, and update the active contractor script with confirmed pain rather than guesses.${activeScriptContext}`,
           messages: nextMessages,
           userMessage: text,
           currentBusiness: selectedProspect,
@@ -818,13 +1148,60 @@ CRITICAL RULES:
 
       // Fallback response if completely offline
       if (!replyText) {
-        replyText = generateMemoryAwareFallback({
-          userMessage: text,
-          memory: updatedMem,
-          currentProspect: selectedProspect,
-          isCallActive: false,
-          agentHat: 'coach'
-        }) || "I'm with you. Tell me what to build, save to scripts page, or let me know when you're ready to open a practice session!";
+        if (lowerText.includes('hook') || lowerText.includes('pattern interrupt')) {
+          const targetName = selectedProspect?.name?.split(' ')[0] || 'Carl';
+          replyText = `**Coach Marcus Vance (Hook Strategy & Verbatim Drill):**\n\n` +
+            `Contractor psychology rule #1: Eliminate pitch breath in the first 7 seconds. Never ask "how are you doing today?"—it triggers instant sales defense. Hit them with a peer-to-peer Route 60 pattern interrupt and give them a clean off-ramp:\n\n` +
+            `👉 **Verbatim 20s Hook:**\n` +
+            `*"Hey ${targetName}, Katy here. I know you're probably hauling materials down Route 60, but give me 20 seconds: if this doesn't stop you from handwriting quotes for 10 hours every Sunday and eating $1,200 on unbudgeted plumbing runs, tell me to jump in the river. Fair?"*\n\n` +
+            `\`\`\`json\n` +
+            `{\n  "action": "updateActiveScript",\n  "params": {\n    "hook": "Hey ${targetName}, Katy here. I know you're probably hauling materials down Route 60, but give me 20 seconds: if this doesn't stop you from handwriting quotes for 10 hours every Sunday and eating $1,200 on unbudgeted plumbing runs, tell me to jump in the river. Fair?"\n  }\n}\n` +
+            `\`\`\``;
+        } else if (lowerText.includes('pain') || lowerText.includes('problem')) {
+          replyText = `**Coach Marcus Vance (Jobsite Pain Breakdown):**\n\n` +
+            `Contractors don't care about "modern software"—they care about lost cash and stolen Sundays. Frame the problem as Sunday handwriting fatigue and change orders scribbled on lumber scraps:\n\n` +
+            `👉 **Verbatim Problem to Say:**\n` +
+            `*"10 hours every Sunday handwriting kitchen & bath quotes; eating $1,200 on unbudgeted plumbing runs because change orders were scribbled on lumber scraps."*\n\n` +
+            `\`\`\`json\n` +
+            `{\n  "action": "updateActiveScript",\n  "params": {\n    "problem": "10 hours every Sunday handwriting kitchen & bath quotes; eating $1,200 on unbudgeted plumbing runs because change orders were scribbled on lumber scraps."\n  }\n}\n` +
+            `\`\`\``;
+        } else if (lowerText.includes('offer') || lowerText.includes('value') || lowerText.includes('pricing')) {
+          replyText = `**Coach Marcus Vance (Solution & Pricing Framing):**\n\n` +
+            `Anchor the solution directly to offline jobsite conditions and clear flat-rate pricing. Single Crew tier ($499 setup / $129/mo):\n\n` +
+            `👉 **Verbatim Value to Say:**\n` +
+            `*"Handled & Buddy walkthrough intake with offline sync in the hollows. Single Crew tier ($499 setup / $129/mo) pays for itself on the first avoided plumbing change order."*\n\n` +
+            `\`\`\`json\n` +
+            `{\n  "action": "updateActiveScript",\n  "params": {\n    "value": "Handled & Buddy walkthrough intake with offline sync in the hollows. Single Crew tier ($499 setup / $129/mo)."  }\n}\n` +
+            `\`\`\``;
+        } else if (lowerText.includes('close') || lowerText.includes('ask') || lowerText.includes('deposit')) {
+          replyText = `**Coach Marcus Vance (Closing Strategy & Verbatim Ask):**\n\n` +
+            `Never ask for a generic 30-minute demo. Close on a low-friction micro-commitment: a $250 upfront onboarding deposit (half of setup) or a 4-minute screen recording:\n\n` +
+            `👉 **Verbatim Closing Ask:**\n` +
+            `*"Lock in onboarding slot with a $250 upfront deposit (half of the $499 setup fee). If your guys aren't using this on Route 60 by Friday, I'll refund every dime. Fair?"*\n\n` +
+            `\`\`\`json\n` +
+            `{\n  "action": "updateActiveScript",\n  "params": {\n    "closingAsk": "Lock in onboarding slot with a $250 upfront deposit (half of the $499 setup fee)."  }\n}\n` +
+            `\`\`\``;
+        } else if (lowerText.includes('connie') || lowerText.includes('wife') || lowerText.includes('email')) {
+          replyText = `**Coach Marcus Vance (Neutralizing 'Send email to Connie'):**\n\n` +
+            `Don't argue and don't accept a brush-off to email oblivion. Pivot with respectful empathy:\n\n` +
+            `👉 **Verbatim Rebuttal:**\n` +
+            `*"Happy to send Connie the paperwork, Carl, but I want to make sure you two actually want this before cluttering her inbox. Give me 30 seconds to explain the math, and if it's no fit, I'll never call back. Fair?"*`;
+        } else if (lowerText.includes('strategy') || lowerText.includes('brainstorm') || lowerText.includes('tonality')) {
+          replyText = `**Coach Marcus Vance (Sales Strategy & Tonality Blueprint):**\n\n` +
+            `1. **Downward Inflection:** Drop your tone at the end of statements instead of pitching up. Upward inflection sounds like asking for permission; downward inflection sounds like an expert peer.\n` +
+            `2. **Slow Down 20%:** Fast talking screams "telemarketer". Match the contractor's unhurried truck-cab cadence.\n` +
+            `3. **The 20-Second Contract:** Acknowledge their time immediately ("caught you on Route 60? Give me 20 seconds..."). Once granted, they will listen.\n` +
+            `4. **Downside Risk Removal:** Never push a 1-year contract. Close on an onboarding test slot with a $250 refundable deposit.\n\n` +
+            `Select any script part below and ask me to draft or tune it with you!`;
+        } else {
+          replyText = generateMemoryAwareFallback({
+            userMessage: text,
+            memory: updatedMem,
+            currentProspect: selectedProspect,
+            isCallActive: false,
+            agentHat: 'coach'
+          }) || "I'm with you. Use the Script Co-Creator below to build your 20s hook, jobsite pain, closing ask, or brainstorm your contractor strategy!";
+        }
       }
 
       // Parse JSON action block if returned in text
@@ -848,6 +1225,7 @@ CRITICAL RULES:
       };
 
       setMessages(prev => [...prev, coachMsg]);
+      recordLearningTurn();
       speakSpeech(replyText, 'marcus');
     } catch (err) {
       setIsThinking(false);
@@ -865,8 +1243,94 @@ CRITICAL RULES:
     if (!scriptEditDraft) return;
     setActiveScript(scriptEditDraft);
     localStorage.setItem('scriptmaster_active_script', JSON.stringify(scriptEditDraft));
+    localStorage.setItem('scriptmaster_active_script_timestamp', Date.now().toString());
+    window.dispatchEvent(new Event('scriptmaster_script_updated'));
     if (setGlobalScript) setGlobalScript(scriptEditDraft);
+    showActionToast('Active script saved and updated across app!');
     setIsEditModalOpen(false);
+  };
+
+  // Helper to extract current part content from active script
+  const getSelectedPartContent = () => {
+    if (!activeScript) return '';
+    switch (selectedScriptPart) {
+      case 'hook':
+        // Dashboard Coach lessons must show only the line Coach selected for
+        // this moment. Do not fall back to an old saved hook here.
+        return coachTargetLine || '';
+      case 'problem':
+        return activeScript.problem || (typeof activeScript.painValue === 'string' ? activeScript.painValue : activeScript.painValue?.problem) || '';
+      case 'value':
+        return activeScript.value || (typeof activeScript.painValue === 'object' ? activeScript.painValue?.value : '') || '';
+      case 'closingAsk':
+        return activeScript.closingAsk || '';
+      case 'rebuttal':
+        return (activeScript.rebuttals || []).map(r => `"${r.objection}": ${r.response}`).join('\n\n') || '';
+      case 'strategy':
+        return `Target: ${activeScript.target || selectedProspect?.name || 'Carl McIntyre (Route 60 General Contractor)'}\nClosing: ${activeScript.closingAsk || '$250 Onboarding Deposit'}\nPositioning: Peer-to-peer field-ops workflow, Sunday handwriting pain, offline sync in the hollows.`;
+      default:
+        return '';
+    }
+  };
+
+  // 1-Click Apply Part to Active Teleprompter Script
+  const handleApplyPartToScript = (partKey, newContent) => {
+    if (!newContent) return;
+    const updates = {};
+    if (partKey === 'hook') updates.hook = newContent;
+    else if (partKey === 'problem') updates.problem = newContent;
+    else if (partKey === 'value') updates.value = newContent;
+    else if (partKey === 'closingAsk') updates.closingAsk = newContent;
+    else if (partKey === 'rebuttal') {
+      updates.rebuttals = [
+        ...(activeScript.rebuttals || []),
+        { objection: 'Objection', response: newContent }
+      ];
+    }
+    const next = { ...activeScript, ...updates };
+    setActiveScript(next);
+    localStorage.setItem('scriptmaster_active_script', JSON.stringify(next));
+    localStorage.setItem('scriptmaster_active_script_timestamp', Date.now().toString());
+    window.dispatchEvent(new Event('scriptmaster_script_updated'));
+    if (setGlobalScript) setGlobalScript(next);
+    showActionToast(`Applied to active teleprompter script!`);
+  };
+
+  // Submit Part Building or Strategy Brainstorm Prompt to Marcus
+  const handleAskMarcusForPart = (overrideText = null) => {
+    const textToSend = (overrideText || partBuilderInput).trim();
+    if (!textToSend) return;
+
+    let partLabel = '20-Second Hook';
+    if (selectedScriptPart === 'problem') partLabel = 'Jobsite Pain / Dollar Leak';
+    else if (selectedScriptPart === 'value') partLabel = 'Proof & Value Proposition';
+    else if (selectedScriptPart === 'closingAsk') partLabel = 'Closing Deposit Ask';
+    else if (selectedScriptPart === 'rebuttal') partLabel = 'Objection Rebuttal';
+    else if (selectedScriptPart === 'strategy') partLabel = 'Sales Strategy & Tonality';
+
+    const fullPrompt = `[SCRIPT CO-CREATOR & STRATEGY LAB - ${partLabel}]: ${textToSend}
+Current ${partLabel}: "${getSelectedPartContent()}"
+Target Contractor: ${selectedProspect?.name || activeScript?.target || 'Carl McIntyre (Route 60 General Contractor)'}.
+Coach Marcus, please give me:
+1. Tactical Sales Strategy & Tonality Breakdown (contractor psychology, eliminating commission breath).
+2. The exact verbatim script line to say out loud.
+3. Call updateActiveScript to lock it into the active teleprompter.`;
+
+    setPartBuilderInput('');
+    handleSendMessage(fullPrompt);
+  };
+
+  // Copy text to clipboard with visual toast
+  const handleCopyPartContent = (text, key) => {
+    if (!text) return;
+    try {
+      navigator.clipboard.writeText(text);
+      setCopiedPartKey(key);
+      showActionToast('Copied to clipboard!');
+      setTimeout(() => setCopiedPartKey(null), 2000);
+    } catch {
+      /* ignore */
+    }
   };
 
   // Scrubber calculation
@@ -885,6 +1349,27 @@ CRITICAL RULES:
       )}
 
       <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 flex flex-col gap-6">
+        <LivePhraseOverlay
+          targetLine={coachTargetLine}
+          spokenText={liveSpeechText}
+          metrics={liveSpeechMetrics}
+          visible={isListening}
+        />
+        {micError && (
+          <div
+            role="alert"
+            className="w-full bg-rose-500/15 border border-rose-500/40 text-rose-300 px-4 py-3 rounded-2xl text-xs font-semibold flex items-center justify-between shadow-lg"
+          >
+            <span>{micError}</span>
+            <button
+              type="button"
+              onClick={() => setMicError(null)}
+              className="text-rose-400 hover:text-white font-bold ml-2 text-xs cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         
         {/* Top Header Row */}
         <div className="flex items-center justify-between gap-3">
@@ -895,6 +1380,22 @@ CRITICAL RULES:
             <ArrowLeft className="w-3.5 h-3.5" />
             <span>Dashboard</span>
           </Link>
+
+          <button
+            type="button"
+            onClick={() => speakSpeech('I am your Coach. We will start with the fundamentals and work forward together. Tell me what you already know about an effective cold call opening.', 'marcus')}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/20 transition"
+            title="Play Coach voice"
+          >
+            <Volume2 className="w-3.5 h-3.5" />
+            <span>Hear Coach</span>
+          </button>
+
+          {voiceError && (
+            <span className="max-w-[260px] text-[10px] font-semibold text-amber-300" role="status">
+              {voiceError}
+            </span>
+          )}
 
           {/* Target Prospect Selector */}
           <div className="relative">
@@ -918,8 +1419,33 @@ CRITICAL RULES:
             <ChevronDown className="w-3 h-3 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
           </div>
 
-          {/* Right Floating Actions: View Script & Audio Toggle */}
+          {/* Right Floating Actions: Mic Toggle, View Script & Audio Toggle */}
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleMic}
+              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-xs border ${
+                isListening
+                  ? 'bg-rose-600 border-rose-500 text-white animate-pulse'
+                  : 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+              title={isListening ? "Click to turn Microphone OFF" : "Click to turn Microphone ON"}
+            >
+              {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5 text-indigo-400" />}
+              <span>{isListening ? "Mic: ON" : "Mic: OFF"}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={commitLiveReply}
+              disabled={!liveSessionRef.current}
+              className="px-3.5 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-xs border bg-indigo-600/20 border-indigo-500/40 text-indigo-200 hover:bg-indigo-600/40 disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Manually tell Gemini Live that your spoken turn is complete"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>Send Reply</span>
+            </button>
+
             <button
               onClick={() => setIsScriptDrawerOpen(!isScriptDrawerOpen)}
               className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-xs border ${
@@ -946,6 +1472,8 @@ CRITICAL RULES:
           </div>
         </div>
 
+        {!embedded && (
+        <>
         {/* Collapsible Translucent Frosted Teleprompter Card */}
         {isScriptDrawerOpen && (
           <div className="bg-slate-900/90 rounded-2xl p-6 border border-slate-800 backdrop-blur-md animate-fadeIn flex flex-col gap-3">
@@ -953,7 +1481,7 @@ CRITICAL RULES:
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-indigo-500" />
                 <h3 className="text-xs font-semibold text-slate-200 uppercase tracking-wider">
-                  20-Second Opening Hook ({activeScript?.title})
+                  Coach-Selected Line
                 </h3>
               </div>
               <button
@@ -965,10 +1493,10 @@ CRITICAL RULES:
             </div>
 
             <p className="text-sm font-medium text-slate-200 leading-relaxed italic">
-              "{activeScript?.hook}"
+              {coachTargetLine ? `"${coachTargetLine}"` : 'Coach will place the exact line you should say here when ready.'}
             </p>
 
-            {activeScript?.rebuttals?.length > 0 && (
+            {coachTargetLine && activeScript?.rebuttals?.length > 0 && (
               <div className="pt-2 border-t border-slate-800 flex flex-wrap gap-2 text-xs">
                 {activeScript.rebuttals.map((r, i) => (
                   <div key={i} className="px-3 py-1.5 rounded-xl bg-slate-950/70 border border-slate-800 text-[11px] text-slate-300">
@@ -1160,6 +1688,9 @@ CRITICAL RULES:
 
         </div>
 
+        </>
+        )}
+
         {/* ======================================================== */}
         {/* STREAMLINED CONVERSATION & COACH FEEDBACK */}
         {/* ======================================================== */}
@@ -1218,6 +1749,178 @@ CRITICAL RULES:
                 <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-spin" />
                 <span>Thinking...</span>
               </div>
+            )}
+          </div>
+
+          {/* ======================================================== */}
+          {/* SCRIPT CO-CREATOR & STRATEGY BRAINSTORM LAB */}
+          {/* ======================================================== */}
+          <div className="bg-slate-950/70 border border-indigo-500/30 rounded-2xl p-4 flex flex-col gap-3 shadow-lg">
+            {/* Header with Part Selector & Toggle */}
+            <div className="flex items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-400">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-white tracking-wide flex items-center gap-1.5">
+                    <span>Script Co-Creator & Strategy Lab</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-900/60 text-indigo-300 font-medium border border-indigo-700/50">
+                      Coach Marcus
+                    </span>
+                  </h4>
+                  <p className="text-[10px] text-slate-400">
+                    Draft, critique, and tune high-converting script parts & contractor strategy
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsBuilderDockOpen(!isBuilderDockOpen)}
+                className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-white transition cursor-pointer"
+                title={isBuilderDockOpen ? "Collapse Builder Dock" : "Expand Builder Dock"}
+              >
+                {isBuilderDockOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
+            </div>
+
+            {isBuilderDockOpen && (
+              <>
+                {/* Script Part Selector Pills */}
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 text-xs">
+                  {[
+                    { id: 'hook', label: '20s Hook', icon: Zap, color: 'text-amber-400' },
+                    { id: 'problem', label: 'Jobsite Pain', icon: Flame, color: 'text-rose-400' },
+                    { id: 'value', label: 'Proof & Offer', icon: Shield, color: 'text-emerald-400' },
+                    { id: 'closingAsk', label: 'Closing Ask', icon: Target, color: 'text-sky-400' },
+                    { id: 'rebuttal', label: 'Rebuttals', icon: Lightbulb, color: 'text-yellow-400' },
+                    { id: 'strategy', label: 'Strategy & Tone', icon: Compass, color: 'text-purple-400' }
+                  ].map(part => {
+                    const Icon = part.icon;
+                    const isSelected = selectedScriptPart === part.id;
+                    return (
+                      <button
+                        key={part.id}
+                        type="button"
+                        onClick={() => setSelectedScriptPart(part.id)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition cursor-pointer shrink-0 border ${
+                          isSelected
+                            ? 'bg-indigo-600 text-white border-indigo-400 shadow-md shadow-indigo-600/30'
+                            : 'bg-slate-900 hover:bg-slate-850 text-slate-300 border-slate-800'
+                        }`}
+                      >
+                        <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : part.color}`} />
+                        <span>{part.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Active Part Current Content & 1-Click Commit */}
+                <div className="bg-slate-900/90 rounded-xl p-3 border border-slate-800 flex flex-col gap-2">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-slate-400 font-medium">
+                      Active Teleprompter Text ({selectedScriptPart.toUpperCase()}):
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleCopyPartContent(getSelectedPartContent(), selectedScriptPart)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer text-[10px]"
+                        title="Copy to clipboard"
+                      >
+                        {copiedPartKey === selectedScriptPart ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-400" />
+                            <span className="text-emerald-400">Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3 text-slate-400" />
+                            <span>Copy</span>
+                          </>
+                        )}
+                      </button>
+
+                      {selectedScriptPart !== 'strategy' && (
+                        <button
+                          type="button"
+                          onClick={() => handleApplyPartToScript(selectedScriptPart, getSelectedPartContent())}
+                          className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-indigo-600/40 hover:bg-indigo-600/60 text-indigo-200 border border-indigo-500/40 transition cursor-pointer text-[10px] font-semibold"
+                          title="Save this line to the active teleprompter"
+                        >
+                          <Zap className="w-3 h-3 text-amber-400" />
+                          <span>Lock to Prompter</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-200 leading-relaxed italic whitespace-pre-wrap line-clamp-3 bg-slate-950/60 p-2 rounded-lg border border-slate-850">
+                    "{getSelectedPartContent() || 'No text set yet for this section.'}"
+                  </p>
+                </div>
+
+                {/* Quick Strategy Brainstorm Chips */}
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 text-[11px]">
+                  <span className="text-slate-500 font-semibold shrink-0 text-[10px]">
+                    Quick Brainstorm:
+                  </span>
+                  {[
+                    { label: '20s Pattern Interrupt', prompt: 'Brainstorm 3 variations of a 20-second pattern interrupt hook that eliminate salesperson commission breath for Carl hauling materials on Route 60.' },
+                    { label: 'Sunday Handwriting Pain', prompt: 'Sharpen the jobsite pain around handwriting quotes for 10 hours on Sundays and eating $1,200 on unbudgeted plumbing runs.' },
+                    { label: "Overcome 'Send to Connie'", prompt: "Give me the psychological strategy and verbatim rebuttal when a contractor says 'Just shoot an email to my wife Connie at the office'." },
+                    { label: '$250 Deposit Close', prompt: 'Craft an aggressive, low-friction closing ask for a $250 upfront onboarding deposit that removes all financial risk for the contractor.' },
+                    { label: 'Downward Inflection Coaching', prompt: 'Explain the tactical difference between upward and downward inflection on cold calls, and show me where I need to drop my tone.' }
+                  ].map((chip, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => handleAskMarcusForPart(chip.prompt)}
+                      className="px-2.5 py-1 rounded-lg bg-slate-900/80 hover:bg-slate-850 text-slate-300 hover:text-indigo-200 border border-slate-800 hover:border-indigo-500/40 transition shrink-0 cursor-pointer text-[11px]"
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Dedicated Part Builder Text Input */}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleAskMarcusForPart();
+                  }}
+                  className="flex items-center gap-2 pt-1"
+                >
+                  <input
+                    type="text"
+                    value={partBuilderInput}
+                    onChange={(e) => setPartBuilderInput(e.target.value)}
+                    placeholder={
+                      selectedScriptPart === 'hook'
+                        ? "e.g. 'Draft a 20s Route 60 pattern interrupt for Carl McIntyre hauling supplies...'"
+                        : selectedScriptPart === 'problem'
+                        ? "e.g. 'Make the Sunday handwriting legal pad pain more urgent and costly...'"
+                        : selectedScriptPart === 'value'
+                        ? "e.g. 'Emphasize offline sync in the hollows and 2-tap photo receipt matching...'"
+                        : selectedScriptPart === 'closingAsk'
+                        ? "e.g. 'Close on the $250 onboarding deposit with zero commission breath...'"
+                        : selectedScriptPart === 'rebuttal'
+                        ? "e.g. 'Overcome: Just shoot an email to my wife Connie at the office...'"
+                        : "e.g. 'Brainstorm strategy for dealing with skeptical WV contractors on Route 60...'"
+                    }
+                    className="flex-1 bg-slate-950 border border-indigo-500/30 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 shadow-inner"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!partBuilderInput.trim() || isThinking}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition cursor-pointer shadow-md disabled:opacity-40 shrink-0"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                    <span>Brainstorm & Draft</span>
+                  </button>
+                </form>
+              </>
             )}
           </div>
 
@@ -1288,33 +1991,19 @@ CRITICAL RULES:
               </span>
             </button>
 
-            <input
-              type="text"
+            <textarea
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault();
                   handleSendMessage();
                 }
               }}
-              placeholder={isListening ? "Listening to your voice..." : isCallActive ? "Type your live rebuttal or answer..." : "Ask coach for advice..."}
-              className="flex-1 bg-slate-950 border border-slate-800 rounded-full px-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              rows={3}
+              placeholder={isListening ? "Listening to your voice..." : isCallActive ? "Type your live rebuttal or answer..." : "Tell Coach what you sell, who you sell it to, and list your products or offer options... (Cmd/Ctrl + Enter to send)"}
+              className="flex-1 min-h-[72px] resize-y bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 text-xs leading-relaxed text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
             />
-
-            {/* Voice Dictation Mic Button */}
-            <button
-              type="button"
-              onClick={toggleMic}
-              className={`p-2 rounded-full border transition flex items-center justify-center shrink-0 cursor-pointer ${
-                isListening
-                  ? 'bg-rose-600 border-rose-500 text-white animate-pulse shadow-md shadow-rose-600/40'
-                  : 'bg-slate-800 hover:bg-slate-750 border-slate-700 text-indigo-400 hover:text-white'
-              }`}
-              title={isListening ? "Listening with mic... click to stop" : "Voice dictation (Click to speak into mic)"}
-            >
-              {isListening ? <MicOff className="w-4 h-4 text-white" /> : <Mic className="w-4 h-4" />}
-            </button>
 
             <button
               onClick={() => handleSendMessage()}
@@ -1324,6 +2013,11 @@ CRITICAL RULES:
               Send
             </button>
           </div>
+          <LiveSpeechFeedback
+            text={liveSpeechText}
+            isListening={isListening}
+            metrics={liveSpeechMetrics}
+          />
         </div>
 
       </main>

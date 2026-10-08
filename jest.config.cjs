@@ -6,6 +6,8 @@ module.exports = {
     '\\.(jpg|jpeg|png|gif|webp|svg|ico)$': '<rootDir>/src/__mocks__/fileMock.js',
     '.*supabaseClient.*': '<rootDir>/src/__mocks__/supabaseClient.js',
     '.*deepgramService.*': '<rootDir>/src/__mocks__/deepgramService.js',
+    '.*ColdCalling3DScene.*': '<rootDir>/src/__mocks__/sceneMock.jsx',
+    '^@google/genai$': '<rootDir>/src/__mocks__/genaiMock.js',
   },
   transform: {
     '^.+\\.(js|jsx)$': ['babel-jest', { configFile: './babel.config.cjs' }],

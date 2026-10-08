@@ -19,7 +19,7 @@ import { getCustomProspects, getSelectedProspectId, setSelectedProspectId } from
 import { getRecordings } from '../lib/recordingsService';
 import IframeMicModal from '../components/IframeMicModal';
 
-export default function DashboardPage() {
+export default function DashboardPage({ setScript }) {
   const navigate = useNavigate();
 
   const [userName, setUserName] = useState('Katy');
@@ -122,7 +122,7 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-[#080B11] text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30">
       <Navbar />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      <main className="relative z-10 flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         
         {/* =========================================================================
             1. MINIMAL COMMAND HEADER
@@ -419,6 +419,7 @@ export default function DashboardPage() {
         isOpen={isIframeMicModalOpen} 
         onClose={() => setIsIframeMicModalOpen(false)} 
       />
+
     </div>
   );
 }

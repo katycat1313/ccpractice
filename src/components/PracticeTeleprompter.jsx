@@ -14,22 +14,29 @@ import {
   CheckCircle2,
   AlertTriangle,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  BookmarkCheck,
+  ArrowRight
 } from 'lucide-react';
+import { getAllSavedScripts, getActiveScript, BUILTIN_TEMPLATES } from '../lib/coachActions';
 
 /**
  * PracticeTeleprompter: Side-Docked Live-Editable Script Teleprompter
- * Pinned beside call controls in Practice Studio.
+ * Pinned beside call controls in Practice Studio & Workshop Drills.
  * Live editable during calls with auto-save to localStorage.
  */
 export default function PracticeTeleprompter({
-  script,
+  script = null,
   onScriptChange,
+  onInsertText = null,
+  onDemonstrate = null,
   activeObjectionIndex = null,
+  activeScriptPart = 'hook',
   isCallActive = false,
   className = ''
 }) {
-  const [currentScript, setCurrentScript] = useState(script);
+  const [currentScript, setCurrentScript] = useState(() => script || getActiveScript());
+  const [savedScripts, setSavedScripts] = useState(() => getAllSavedScripts());
   const [copiedField, setCopiedField] = useState(null);
   const [zoomLevel, setZoomLevel] = useState(100); // 90%, 100%, 110%, 120%
   const [saveIndicator, setSaveIndicator] = useState(false);
@@ -46,13 +53,36 @@ export default function PracticeTeleprompter({
     }
   }, [script]);
 
+  // Sync with global script update events so teleprompter is always available and up-to-date
+  useEffect(() => {
+    const handleScriptUpdated = () => {
+      try {
+        const active = getActiveScript();
+        if (active) setCurrentScript(active);
+      } catch (_) {}
+    };
+
+    const handleSavedScriptsUpdated = () => {
+      setSavedScripts(getAllSavedScripts());
+    };
+
+    window.addEventListener('scriptmaster_script_updated', handleScriptUpdated);
+    window.addEventListener('scriptmaster_scripts_updated', handleSavedScriptsUpdated);
+    return () => {
+      window.removeEventListener('scriptmaster_script_updated', handleScriptUpdated);
+      window.removeEventListener('scriptmaster_scripts_updated', handleSavedScriptsUpdated);
+    };
+  }, []);
+
   const handleFieldUpdate = (field, value) => {
     const updated = { ...currentScript, [field]: value };
     setCurrentScript(updated);
     
-    // Auto-save to localStorage
+    // Auto-save to localStorage and notify app
     try {
       localStorage.setItem('scriptmaster_active_script', JSON.stringify(updated));
+      localStorage.setItem('scriptmaster_active_script_timestamp', Date.now().toString());
+      window.dispatchEvent(new Event('scriptmaster_script_updated'));
     } catch {
       /* ignore */
     }
@@ -64,6 +94,24 @@ export default function PracticeTeleprompter({
     // Flash subtle save indicator
     setSaveIndicator(true);
     setTimeout(() => setSaveIndicator(false), 2000);
+  };
+
+  const handleSelectScript = (idOrTitle) => {
+    const all = [...savedScripts, ...BUILTIN_TEMPLATES];
+    const match = all.find(s => (s.id && s.id === idOrTitle) || (s.title && s.title === idOrTitle) || (s.name && s.name === idOrTitle));
+    if (match) {
+      setCurrentScript(match);
+      try {
+        localStorage.setItem('scriptmaster_active_script', JSON.stringify(match));
+        localStorage.setItem('scriptmaster_active_script_timestamp', Date.now().toString());
+        window.dispatchEvent(new Event('scriptmaster_script_updated'));
+      } catch (_) {}
+      if (onScriptChange) {
+        onScriptChange(match);
+      }
+      setSaveIndicator(true);
+      setTimeout(() => setSaveIndicator(false), 2000);
+    }
   };
 
   const handleRebuttalChange = (index, key, value) => {
@@ -131,7 +179,7 @@ export default function PracticeTeleprompter({
                 </span>
               )}
             </div>
-            <p className="text-[10px] text-slate-400 truncate max-w-[200px]">
+            <p className="text-[10px] text-slate-400 truncate max-w-[180px]">
               {currentScript.title || 'Working Script'}
             </p>
           </div>
@@ -149,7 +197,7 @@ export default function PracticeTeleprompter({
             <button
               type="button"
               onClick={() => setZoomLevel(prev => Math.max(90, prev - 10))}
-              className="p-1 text-slate-400 hover:text-white rounded transition"
+              className="p-1 text-slate-400 hover:text-white rounded transition cursor-pointer"
               title="Decrease text size"
             >
               <ZoomOut className="w-3.5 h-3.5" />
@@ -160,7 +208,7 @@ export default function PracticeTeleprompter({
             <button
               type="button"
               onClick={() => setZoomLevel(prev => Math.min(130, prev + 10))}
-              className="p-1 text-slate-400 hover:text-white rounded transition"
+              className="p-1 text-slate-400 hover:text-white rounded transition cursor-pointer"
               title="Increase text size"
             >
               <ZoomIn className="w-3.5 h-3.5" />
@@ -168,13 +216,44 @@ export default function PracticeTeleprompter({
             <button
               type="button"
               onClick={() => setZoomLevel(100)}
-              className="p-1 text-slate-500 hover:text-slate-300 rounded transition"
+              className="p-1 text-slate-500 hover:text-slate-300 rounded transition cursor-pointer"
               title="Reset text size"
             >
               <RotateCcw className="w-3 h-3" />
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Script Selector Dropdown Bar */}
+      <div className="px-4 py-2 bg-slate-950/60 border-b border-slate-800/80 flex items-center justify-between gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 text-xs text-slate-400 shrink-0">
+          <BookmarkCheck className="w-3.5 h-3.5 text-indigo-400" />
+          <span className="text-[11px] font-bold text-slate-300">Pitch:</span>
+        </div>
+        <select
+          value={currentScript.id || currentScript.title || ''}
+          onChange={(e) => handleSelectScript(e.target.value)}
+          className="bg-slate-900 border border-slate-800 text-slate-200 text-xs font-semibold rounded-lg px-2.5 py-1 focus:outline-none focus:border-indigo-500 cursor-pointer flex-1 truncate max-w-[280px]"
+          title="Switch script on teleprompter"
+        >
+          {savedScripts.length > 0 && (
+            <optgroup label="Your Saved Scripts">
+              {savedScripts.map(s => (
+                <option key={s.id || s.title} value={s.id || s.title}>
+                  {s.title || s.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          <optgroup label="Contractor Pitch Templates">
+            {BUILTIN_TEMPLATES.map(t => (
+              <option key={t.id || t.title} value={t.id || t.title}>
+                {t.title}
+              </option>
+            ))}
+          </optgroup>
+        </select>
       </div>
 
       {/* =========================================================================
@@ -186,7 +265,7 @@ export default function PracticeTeleprompter({
       >
 
         {/* SECTION 1: 20-SECOND PATTERN INTERRUPT HOOK */}
-        <div className="bg-slate-950/80 rounded-2xl p-4 border border-slate-800 shadow-sm space-y-2 relative group">
+        <div className={`bg-slate-950/80 rounded-2xl p-4 border shadow-sm space-y-2 relative group transition-all ${activeScriptPart === 'hook' ? 'border-indigo-400 ring-2 ring-indigo-500/30' : 'border-slate-800'}`}>
           <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-800/80">
             <div className="flex items-center gap-2">
               <span className="w-5 h-5 rounded-md bg-indigo-500/20 text-indigo-400 font-black text-[10px] flex items-center justify-center">
@@ -208,10 +287,34 @@ export default function PracticeTeleprompter({
                 {!isHookOptimal && <AlertTriangle className="w-2.5 h-2.5 ml-0.5" />}
               </span>
 
+              {onInsertText && (
+                <button
+                  type="button"
+                  onClick={() => onInsertText(currentScript.hook)}
+                  className="px-2 py-0.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
+                  title="Insert hook into drill response"
+                >
+                  <ArrowRight className="w-3 h-3" />
+                  <span>Use Line</span>
+                </button>
+              )}
+
+              {onDemonstrate && (
+                <button
+                  type="button"
+                  onClick={() => onDemonstrate(currentScript.hook, 'opening hook')}
+                  className="px-2 py-0.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
+                  title="Ask Coach to model this line"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  <span>Model Line</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => copyToClipboard(currentScript.hook, 'hook')}
-                className="p-1 text-slate-400 hover:text-white rounded transition"
+                className="p-1 text-slate-400 hover:text-white rounded transition cursor-pointer"
                 title="Copy opening hook"
               >
                 {copiedField === 'hook' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -226,10 +329,25 @@ export default function PracticeTeleprompter({
             placeholder="Type your opening 20-second pattern interrupt..."
             className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 text-xs text-white leading-relaxed font-medium focus:outline-none focus:border-indigo-500 transition resize-none"
           />
+
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+            <div className="flex items-center gap-2 mb-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span className="text-[10px] font-black uppercase tracking-wider text-amber-200">Coach delivery cues</span>
+            </div>
+            <textarea
+              rows={2}
+              value={currentScript.deliveryNotes || ''}
+              onChange={(e) => handleFieldUpdate('deliveryNotes', e.target.value)}
+              placeholder="Pause after the hook; slow down on the pain point; drop your tone on the closing ask."
+              className="w-full resize-y bg-slate-950/70 border border-amber-500/20 rounded-lg p-2 text-[11px] leading-relaxed text-amber-100 placeholder:text-slate-500 focus:outline-none focus:border-amber-400/60"
+              aria-label="Coach delivery cues"
+            />
+          </div>
         </div>
 
         {/* SECTION 2: JOBSITE PAIN & SOLUTION VALUE */}
-        <div className="bg-slate-950/80 rounded-2xl p-4 border border-slate-800 shadow-sm space-y-3">
+        <div className={`bg-slate-950/80 rounded-2xl p-4 border shadow-sm space-y-3 transition-all ${activeScriptPart === 'problem' || activeScriptPart === 'value' ? 'border-amber-400 ring-2 ring-amber-500/30' : 'border-slate-800'}`}>
           <div className="flex items-center justify-between pb-1 border-b border-slate-800/80">
             <div className="flex items-center gap-2">
               <span className="w-5 h-5 rounded-md bg-amber-500/20 text-amber-400 font-black text-[10px] flex items-center justify-center">
@@ -240,13 +358,27 @@ export default function PracticeTeleprompter({
               </span>
             </div>
 
-            <button
-              type="button"
-              onClick={() => toggleSection('pitch')}
-              className="p-1 text-slate-400 hover:text-white rounded transition"
-            >
-              {collapsedSections.pitch ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-            </button>
+            <div className="flex items-center gap-2">
+              {onInsertText && (
+                <button
+                  type="button"
+                  onClick={() => onInsertText(`${currentScript.problem || ''} ${currentScript.value || ''}`.trim())}
+                  className="px-2 py-0.5 rounded-lg bg-amber-500/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
+                  title="Insert pain & proof into drill response"
+                >
+                  <ArrowRight className="w-3 h-3" />
+                  <span>Use Line</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => toggleSection('pitch')}
+                className="p-1 text-slate-400 hover:text-white rounded transition cursor-pointer"
+              >
+                {collapsedSections.pitch ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+              </button>
+            </div>
           </div>
 
           {!collapsedSections.pitch && (
@@ -281,7 +413,7 @@ export default function PracticeTeleprompter({
         </div>
 
         {/* SECTION 3: OBJECTION REBUTTALS VAULT */}
-        <div className="bg-slate-950/80 rounded-2xl p-4 border border-slate-800 shadow-sm space-y-3">
+        <div className={`bg-slate-950/80 rounded-2xl p-4 border shadow-sm space-y-3 transition-all ${activeScriptPart === 'rebuttal' ? 'border-rose-400 ring-2 ring-rose-500/30' : 'border-slate-800'}`}>
           <div className="flex items-center justify-between pb-1 border-b border-slate-800/80">
             <div className="flex items-center gap-2">
               <span className="w-5 h-5 rounded-md bg-rose-500/20 text-rose-400 font-black text-[10px] flex items-center justify-center">
@@ -305,7 +437,7 @@ export default function PracticeTeleprompter({
               <button
                 type="button"
                 onClick={() => toggleSection('rebuttals')}
-                className="p-1 text-slate-400 hover:text-white rounded transition"
+                className="p-1 text-slate-400 hover:text-white rounded transition cursor-pointer"
               >
                 {collapsedSections.rebuttals ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
               </button>
@@ -330,10 +462,21 @@ export default function PracticeTeleprompter({
                         Objection #{i + 1}
                       </span>
                       <div className="flex items-center gap-1.5">
+                        {onInsertText && (
+                          <button
+                            type="button"
+                            onClick={() => onInsertText(reb.response)}
+                            className="px-2 py-0.5 rounded-lg bg-rose-500/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
+                            title="Insert rebuttal counter into drill response"
+                          >
+                            <ArrowRight className="w-3 h-3" />
+                            <span>Use Line</span>
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => copyToClipboard(reb.response, `reb-${i}`)}
-                          className="p-1 text-slate-400 hover:text-white rounded"
+                          className="p-1 text-slate-400 hover:text-white rounded cursor-pointer"
                           title="Copy response"
                         >
                           {copiedField === `reb-${i}` ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
@@ -341,7 +484,7 @@ export default function PracticeTeleprompter({
                         <button
                           type="button"
                           onClick={() => handleDeleteRebuttal(i)}
-                          className="p-1 text-slate-500 hover:text-rose-400 rounded"
+                          className="p-1 text-slate-500 hover:text-rose-400 rounded cursor-pointer"
                           title="Delete rebuttal"
                         >
                           <Trash2 className="w-3 h-3" />
@@ -383,14 +526,28 @@ export default function PracticeTeleprompter({
               </span>
             </div>
 
-            <button
-              type="button"
-              onClick={() => copyToClipboard(currentScript.closingAsk, 'close')}
-              className="p-1 text-slate-400 hover:text-white rounded"
-              title="Copy closing ask"
-            >
-              {copiedField === 'close' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-            </button>
+            <div className="flex items-center gap-2">
+              {onInsertText && (
+                <button
+                  type="button"
+                  onClick={() => onInsertText(currentScript.closingAsk)}
+                  className="px-2 py-0.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
+                  title="Insert closing ask into drill response"
+                >
+                  <ArrowRight className="w-3 h-3" />
+                  <span>Use Line</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => copyToClipboard(currentScript.closingAsk, 'close')}
+                className="p-1 text-slate-400 hover:text-white rounded cursor-pointer"
+                title="Copy closing ask"
+              >
+                {copiedField === 'close' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+            </div>
           </div>
 
           <textarea
@@ -408,9 +565,9 @@ export default function PracticeTeleprompter({
       <div className="p-3 bg-slate-950 border-t border-slate-800 text-[10px] text-slate-500 flex items-center justify-between shrink-0">
         <span className="flex items-center gap-1">
           <Sparkles className="w-3 h-3 text-indigo-400" />
-          Edits auto-saved to active script
+          Edits auto-saved to active pitch
         </span>
-        <span className="font-mono">
+        <span className="font-mono truncate max-w-[200px]">
           {currentScript.target || 'West Virginia Contractor'}
         </span>
       </div>
@@ -420,8 +577,9 @@ export default function PracticeTeleprompter({
 }
 
 PracticeTeleprompter.propTypes = {
-  script: PropTypes.object.isRequired,
+  script: PropTypes.object,
   onScriptChange: PropTypes.func,
+  onInsertText: PropTypes.func,
   activeObjectionIndex: PropTypes.number,
   isCallActive: PropTypes.bool,
   className: PropTypes.string

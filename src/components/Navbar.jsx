@@ -24,19 +24,9 @@ export default function Navbar() {
       setIsIframeMicModalOpen(true);
       return;
     }
-    // If not in iframe, test or route directly to practice
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ audio: true })
-        .then((stream) => {
-          stream.getTracks().forEach(t => t.stop());
-          navigate('/practice');
-        })
-        .catch(() => {
-          setIsIframeMicModalOpen(true);
-        });
-    } else {
-      navigate('/practice');
-    }
+    // The global Navbar mic belongs to Coach. Practice is opened separately
+    // by Coach when the student is ready; this button must not route there.
+    window.dispatchEvent(new Event('scriptmaster_open_coach'));
   };
 
   const handleSignOut = async () => {
@@ -125,7 +115,7 @@ export default function Navbar() {
             type="button"
             onClick={handleMicButtonClick}
             className="px-3 py-1.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 hover:from-indigo-500 hover:to-purple-500 text-white border border-indigo-400/40 rounded-xl transition flex items-center gap-1.5 text-xs font-bold shadow-md shadow-indigo-600/30 cursor-pointer group active:scale-95"
-            title={isInIframe ? "Click to open full window & enable microphone" : "Microphone Audio Ready - Practice Call"}
+            title={isInIframe ? "Click to open full window & enable microphone" : "Open Coach microphone"}
           >
             <Mic className="w-3.5 h-3.5 text-white animate-pulse" />
             <span className="font-semibold">Mic</span>

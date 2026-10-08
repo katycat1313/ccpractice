@@ -397,6 +397,25 @@ export default function RecordingsPage() {
                         </div>
                       </div>
 
+                      {Array.isArray(rec.transcriptTurns) && rec.transcriptTurns.length > 0 && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Replay transcript timeline</div>
+                          <div className="max-h-48 overflow-y-auto space-y-1.5">
+                            {rec.transcriptTurns.map((turn, index) => (
+                              <button
+                                type="button"
+                                key={`${rec.id}-turn-${index}`}
+                                onClick={() => handleSeek(turn.timestampSeconds || 0, rec)}
+                                className="w-full text-left flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-white transition"
+                              >
+                                <span className="font-mono text-[10px] text-indigo-600 shrink-0">{formatSeconds(turn.timestampSeconds || 0)}</span>
+                                <span className="text-[11px] text-slate-700"><strong>{turn.speaker}:</strong> {turn.text}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       {/* Power Word & Filler Word Badges */}
                       <div className="flex items-center justify-between pt-2 flex-wrap gap-2">
                         <div className="flex items-center gap-2 flex-wrap">

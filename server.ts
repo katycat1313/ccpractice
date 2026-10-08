@@ -1,5 +1,5 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
+import { createServer as createViteServer, loadEnv } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -7,6 +7,11 @@ import { GoogleGenAI } from '@google/genai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Load the project-root .env for the Express-side Gemini routes too.
+// Vite loads it for the browser automatically, but the custom server does not.
+const loadedEnv = loadEnv(process.env.NODE_ENV || 'development', process.cwd(), '');
+Object.assign(process.env, loadedEnv);
 
 const app = express();
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -38,6 +43,25 @@ const serverApiKey = getValidGeminiKey();
 const isApiKeyConfigured = Boolean(serverApiKey);
 const deepgramApiKey = process.env.DEEPGRAM_API_KEY || '';
 const isDeepgramConfigured = Boolean(deepgramApiKey && deepgramApiKey.trim().length > 10 && !deepgramApiKey.includes('YOUR_'));
+
+function pcm16ToWav(input: Buffer, sampleRate = 24000, channels = 1) {
+  const header = Buffer.alloc(44);
+  const byteRate = sampleRate * channels * 2;
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + input.length, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(channels * 2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(input.length, 40);
+  return Buffer.concat([header, input]);
+}
 
 function getGenAI(explicitKey?: string) {
   const key = getValidGeminiKey(explicitKey);
@@ -527,9 +551,12 @@ app.post('/api/gemini/tts', async (req, res) => {
       }
     });
 
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    const inlineAudio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+    const base64Audio = inlineAudio?.data;
     if (base64Audio) {
-      return res.json({ audioBase64: base64Audio, mimeType: 'audio/wav', engine: 'gemini-live' });
+      const rawAudio = Buffer.from(base64Audio, 'base64');
+      const wavAudio = pcm16ToWav(rawAudio, 24000, 1);
+      return res.json({ audioBase64: wavAudio.toString('base64'), mimeType: 'audio/wav', engine: 'gemini-live', sourceMimeType: inlineAudio?.mimeType || 'audio/L16;rate=24000' });
     }
   } catch (err: any) {
     console.warn('Gemini Live TTS notice, trying Deepgram fallback:', err?.message || err);
