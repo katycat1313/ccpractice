@@ -21,6 +21,7 @@ export default function HumanAgent3DAvatar({
   const portraitLayerRef = useRef(null);
   const voiceBarRefs = useRef([]);
   const [imgFailed, setImgFailed] = useState(false);
+  const [useFallbackSheet, setUseFallbackSheet] = useState(false);
   const [framingMode, setFramingMode] = useState('closeup'); // 'closeup' | 'full'
 
   const liveRef = useRef({
@@ -39,6 +40,7 @@ export default function HumanAgent3DAvatar({
 
   useEffect(() => {
     setImgFailed(false);
+    setUseFallbackSheet(false);
   }, [agent?.id, agent?.portraitUrl]);
 
   useEffect(() => {
@@ -117,10 +119,11 @@ export default function HumanAgent3DAvatar({
     liveRef.current.pointerY = 0;
   };
 
-  const activeImageSrc =
+  const primarySrc =
     framingMode === 'full' && agent?.fullRenderUrl
       ? agent.fullRenderUrl
       : agent?.portraitUrl;
+  const activeImageSrc = useFallbackSheet && agent?.fallbackSheetUrl ? agent.fallbackSheetUrl : primarySrc;
 
   const hasDistinctFullRender =
     Boolean(agent?.fullRenderUrl) && agent.fullRenderUrl !== agent?.portraitUrl;
@@ -152,9 +155,17 @@ export default function HumanAgent3DAvatar({
               src={activeImageSrc}
               alt={`${agent?.displayName || 'Agent'} live video feed`}
               referrerPolicy="no-referrer"
-              onError={() => setImgFailed(true)}
+              onError={() => {
+                if (!useFallbackSheet && agent?.fallbackSheetUrl) {
+                  setUseFallbackSheet(true);
+                } else {
+                  setImgFailed(true);
+                }
+              }}
               className={
-                framingMode === 'full'
+                useFallbackSheet
+                  ? 'w-full h-full max-w-[680px] object-cover object-[82%_18%] sm:rounded-xl shadow-2xl'
+                  : framingMode === 'full'
                   ? 'w-full h-full object-contain'
                   : 'w-full h-full max-w-[680px] object-cover object-[50%_18%] sm:rounded-xl shadow-2xl'
               }

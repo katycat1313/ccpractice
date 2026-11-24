@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { GoogleGenAI } from '@google/genai';
 import { getGeminiApiKey, askGeminiCoach, getGeminiTTSAudio } from '../lib/geminiClient';
+import { resolveProspectVoice } from '../lib/voiceResolver';
 import { GeminiLiveSession } from '../lib/geminiLiveClient';
 import { playPickupClick, playHangupClick } from '../lib/soundUtils';
 import IframeMicModal from './IframeMicModal';
@@ -470,7 +471,7 @@ OUTPUT STRICTLY AS JSON:
 
     try {
       const session = new GeminiLiveSession({
-        voiceName: 'Fenrir',
+        voiceName: resolveProspectVoice(selected.name || selected.id).liveVoice,
         systemInstruction: `You are roleplaying as ${selected.name} (${selected.defaultTrade}) and simultaneously providing instant sales coaching as Marcus Vance.
 THE SALES REP'S PRODUCT: ${offerDna.appName} (${offerDna.valueProp}, ${offerDna.pricingStructure}).
 YOUR ROLEPLAY BEHAVIOR:

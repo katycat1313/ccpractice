@@ -36,6 +36,7 @@ import { askGeminiCoach } from '../lib/geminiClient';
 import { WV_SCRIPT_TEMPLATES, HANDLED_CLOSING_PITCH_DEFAULTS } from './ScriptBuilderPage';
 import { analyzeDelivery } from '../lib/trainingAnalysis';
 import { recordTrainingResult, getNextTrainingDrill } from '../lib/trainingProgress';
+import { resolveCoachVoice, resolveProspectVoice } from '../lib/voiceResolver';
 
 export const CARL_DEFAULT_SCRIPT = {
   id: 'tpl-carl',
@@ -269,7 +270,7 @@ ${(prospect.commonObjections || []).map((o, idx) => `   - Objection #${idx + 1}:
     const contractorPrompt = buildContractorPersonaPrompt(activeProspect);
     const systemInstruction = isClassroom ? MARCUS_CLASSROOM_INSTRUCTOR_PROMPT : contractorPrompt;
     const scriptContext = `\n\nACTIVE TELEPROMPTER SCRIPT (authoritative):\nHook: ${currentScript.hook}\nProblem: ${currentScript.problem || currentScript.painValue?.problem || ''}\nValue: ${currentScript.value || currentScript.painValue?.value || ''}\nClosing ask: ${currentScript.closingAsk || ''}\nDelivery cues: ${currentScript.deliveryNotes || 'Use a calm pace, pause after the hook, and drop your tone at the end of statements.'}\nUse these exact lines when coaching the student. Do not substitute a different generic opener while this script is displayed.`;
-    const voiceId = isClassroom ? 'Fenrir' : (activeProspect.id?.includes('delbert') ? 'Charon' : activeProspect.id?.includes('bo') ? 'Puck' : 'Fenrir');
+    const voiceId = isClassroom ? resolveCoachVoice('marcus').liveVoice : resolveProspectVoice(activeProspect).liveVoice;
     const remoteSpeakerName = isClassroom ? 'Coach Marcus' : activeProspect.name;
 
     const initialGreeting = typeof initialDrillPrompt === 'string' && initialDrillPrompt.trim()

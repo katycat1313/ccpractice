@@ -2,10 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import Navbar from '../components/Navbar';
 import HumanAgent3DAvatar from '../components/HumanAgent3DAvatar';
 import DossierDrawerModal from '../components/DossierDrawerModal';
+import AvatarSessionSetupModal from '../components/AvatarSessionSetupModal';
 import IframeMicModal from '../components/IframeMicModal';
 import { GeminiLiveSession } from '../lib/geminiLiveClient';
 import {
   getAllInterviewAgents,
+  SALES_SCENARIO_OPTIONS,
+  buildPresetSessionConfig,
+  buildAgentOpeningLine,
   buildAgentLiveSystemPrompt,
 } from '../lib/agentsConfig';
 import {
@@ -20,6 +24,11 @@ import {
 } from '../lib/adaptiveLearning';
 import { syncAdaptiveStateToSupabase } from '../lib/supabaseSync';
 import {
+  GEMINI_LIVE_VOICES,
+  resolveAgentVoice,
+  saveAgentVoiceOverride,
+} from '../lib/voiceResolver';
+import {
   Video,
   VideoOff,
   Mic,
@@ -31,7 +40,11 @@ import {
   ChevronDown,
   ChevronUp,
   RotateCcw,
+  Volume2,
+  SlidersHorizontal,
 } from 'lucide-react';
+
+const SESSION_CONFIGS_STORAGE_KEY = 'scriptmaster_avatar_session_configs_v1';
 
 function formatClock(totalSeconds) {
   const mins = Math.floor(totalSeconds / 60);
@@ -39,12 +52,37 @@ function formatClock(totalSeconds) {
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
+function loadSavedSessionConfigs() {
+  try {
+    const raw = localStorage.getItem(SESSION_CONFIGS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function getEffectiveDebriefMode(cfg) {
+  if (!cfg || cfg.track === 'interview') return 'interview';
+  if (cfg.salesScenario === 'discovery') return 'discovery';
+  return 'agency-pitch';
+}
+
+function getScenarioSummaryLabel(cfg) {
+  if (!cfg) return 'Sales Discovery';
+  if (cfg.track === 'interview') {
+    return `Interview · ${cfg.targetPosition || 'AI Engineer'} @ ${cfg.companyName || 'Target Co'}`;
+  }
+  const found = SALES_SCENARIO_OPTIONS.find((s) => s.id === cfg.salesScenario);
+  return `${found ? found.shortLabel : 'Sales Call'} · ${cfg.companyName || 'Prospect'}`;
+}
+
 export default function VideoInterviewStudioPage() {
-  const [mode, setMode] = useState('interview'); // 'interview' | 'agency-pitch'
   const [agents, setAgents] = useState(() => getAllInterviewAgents());
   const [selectedAgentId, setSelectedAgentId] = useState('agent_char_charlie_mwimrybr');
   const [dossier, setDossier] = useState(() => getCareerDossier());
   const [adaptiveState, setAdaptiveState] = useState(() => getAdaptiveLearningState());
+  const [savedConfigs, setSavedConfigs] = useState(() => loadSavedSessionConfigs());
+  const [setupModalAgentId, setSetupModalAgentId] = useState(null);
 
   const [callState, setCallState] = useState('disconnected');
   const [isMuted, setIsMuted] = useState(false);
@@ -77,20 +115,42 @@ export default function VideoInterviewStudioPage() {
   const transcriptEndRef = useRef(null);
   const elapsedRef = useRef(0);
   const turnsRef = useRef([]);
+  const refAudioRef = useRef(null);
 
   elapsedRef.current = elapsedSeconds;
   turnsRef.current = transcriptTurns;
 
   const selectedAgent =
     agents.find((a) => a.id === selectedAgentId) || agents[0];
+  const [, setVoiceTick] = useState(0);
+  const resolvedVoice = resolveAgentVoice(selectedAgent);
 
-  const activePressureTargets = getPressureDirectivesForMode(mode);
+  const activeSessionConfig =
+    savedConfigs[selectedAgent.id] ||
+    buildPresetSessionConfig({
+      agent: selectedAgent,
+      track: 'sales',
+      salesScenario: 'discovery',
+      dossier,
+    });
+
+  const effectiveMode = getEffectiveDebriefMode(activeSessionConfig);
+  const activePressureTargets = getPressureDirectivesForMode(effectiveMode);
   const isCallActive = ['connecting', 'connected', 'listening', 'speaking', 'thinking'].includes(callState);
+
+  const modalAgent = setupModalAgentId
+    ? agents.find((a) => a.id === setupModalAgentId) || selectedAgent
+    : null;
 
   useEffect(() => {
     const refreshAgents = () => setAgents(getAllInterviewAgents());
+    const refreshVoices = () => setVoiceTick((t) => t + 1);
     window.addEventListener('scriptmaster_agents_updated', refreshAgents);
-    return () => window.removeEventListener('scriptmaster_agents_updated', refreshAgents);
+    window.addEventListener('scriptmaster_voices_updated', refreshVoices);
+    return () => {
+      window.removeEventListener('scriptmaster_agents_updated', refreshAgents);
+      window.removeEventListener('scriptmaster_voices_updated', refreshVoices);
+    };
   }, []);
 
   useEffect(() => {
@@ -110,6 +170,36 @@ export default function VideoInterviewStudioPage() {
       stopUserCamInternal();
     };
   }, []);
+
+  function persistAgentSessionConfig(agentId, nextCfg) {
+    const updated = {
+      ...savedConfigs,
+      [agentId]: nextCfg,
+    };
+    setSavedConfigs(updated);
+    try {
+      localStorage.setItem(SESSION_CONFIGS_STORAGE_KEY, JSON.stringify(updated));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function handleAvatarCardClick(agent) {
+    if (isCallActive) return;
+    setSelectedAgentId(agent.id);
+    setSetupModalAgentId(agent.id);
+  }
+
+  function handleQuickSwitchScenario(track, salesScenario = 'discovery') {
+    if (isCallActive) return;
+    const nextCfg = buildPresetSessionConfig({
+      agent: selectedAgent,
+      track,
+      salesScenario,
+      dossier,
+    });
+    persistAgentSessionConfig(selectedAgent.id, nextCfg);
+  }
 
   function stopUserCamInternal() {
     if (userCamStreamRef.current) {
@@ -188,7 +278,7 @@ export default function VideoInterviewStudioPage() {
         captureCanvasRef.current = document.createElement('canvas');
       }
 
-      // Stream 1 FPS JPEG snapshots into Gemini Live so the agent sees the shared KRECHET Academy screen
+      // Stream 1 FPS JPEG snapshots into Gemini Live so the agent sees KRECHET Academy or architecture slides
       frameIntervalRef.current = setInterval(() => {
         const vid = screenVideoRef.current;
         const session = liveSessionRef.current;
@@ -210,7 +300,20 @@ export default function VideoInterviewStudioPage() {
     }
   }
 
-  async function startLiveCall() {
+  async function startLiveCall(overrideAgent = null, overrideConfig = null) {
+    const targetAgent = overrideAgent || selectedAgent;
+    const sessionCfg =
+      overrideConfig ||
+      savedConfigs[targetAgent.id] ||
+      buildPresetSessionConfig({
+        agent: targetAgent,
+        track: 'sales',
+        salesScenario: 'discovery',
+        dossier,
+      });
+
+    const callMode = getEffectiveDebriefMode(sessionCfg);
+
     setErrorBanner('');
     setDebriefReport(null);
     setTranscriptTurns([]);
@@ -220,26 +323,37 @@ export default function VideoInterviewStudioPage() {
     setBargeInCount(0);
     setEverScreenShared(isScreenSharing);
 
+    if (liveSessionRef.current) {
+      try {
+        liveSessionRef.current.stop();
+      } catch {
+        /* ignore */
+      }
+      liveSessionRef.current = null;
+    }
+
     const dossierPromptBlock = formatDossierForPrompt(dossier);
-    const pressurePromptBlock = buildPressurePromptBlock(mode);
+    const pressurePromptBlock = buildPressurePromptBlock(callMode);
     const systemInstruction = buildAgentLiveSystemPrompt({
-      agent: selectedAgent,
-      mode,
+      agent: targetAgent,
+      mode: callMode,
+      sessionConfig: sessionCfg,
       dossierPromptBlock,
       pressurePromptBlock,
     });
 
-    const openingLine =
-      mode === 'agency-pitch'
-        ? selectedAgent.openingAgency
-        : selectedAgent.openingInterview;
+    const openingLine = buildAgentOpeningLine({
+      agent: targetAgent,
+      sessionConfig: sessionCfg,
+    });
 
+    const agentVoice = resolveAgentVoice(targetAgent);
     let pendingUserText = '';
 
     const session = new GeminiLiveSession({
-      voiceName: selectedAgent.voice?.geminiLiveVoice || 'Fenrir',
+      voiceName: agentVoice.liveVoice,
       systemInstruction,
-      initialPrompt: `Start the video call right now by greeting the user naturally in 1–2 sentences along these lines: "${openingLine}"`,
+      initialPrompt: `Start the live video call right now by greeting the user naturally in 1–2 sentences along these lines: "${openingLine}"`,
       onStateChange: (st) => setCallState(st),
       onAudioAmplitude: (amp) => setAudioAmplitude(amp),
       onInputTranscript: (_chunk, fullUserText) => {
@@ -272,7 +386,7 @@ export default function VideoInterviewStudioPage() {
           setTranscriptTurns((prev) => [
             ...prev,
             {
-              speaker: selectedAgent.displayName,
+              speaker: targetAgent.displayName,
               text: finalAgentText,
               time: formatClock(elapsedRef.current),
             },
@@ -326,9 +440,10 @@ export default function VideoInterviewStudioPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          mode,
+          mode: effectiveMode,
           personaName: selectedAgent.displayName,
-          personaRole: selectedAgent.roleTitle,
+          personaRole: activeSessionConfig.counterpartRole || selectedAgent.roleTitle,
+          sessionConfig: activeSessionConfig,
           durationSeconds: elapsedRef.current,
           transcriptTurns: finalTurns,
           screenShared: everScreenShared,
@@ -341,7 +456,7 @@ export default function VideoInterviewStudioPage() {
       if (res.ok && debrief) {
         setDebriefReport(debrief);
         const updatedAdaptive = recordDebriefToAdaptiveEngine({
-          mode,
+          mode: effectiveMode,
           personaName: selectedAgent.displayName,
           durationSeconds: elapsedRef.current,
           debrief,
@@ -380,48 +495,94 @@ export default function VideoInterviewStudioPage() {
 
       <main className="max-w-[1400px] w-full mx-auto px-4 sm:px-6 py-6 flex-1 space-y-6">
         {/* Top Studio Toolbar */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 border-b border-slate-800/80">
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 pb-5 border-b border-slate-800/80">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-white">
-              Live Agent Interview &amp; Screen-Share Studio
+              Live Sales, Discovery &amp; Interview Studio
             </h1>
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 mt-1">
-              <span>Gemini 3.8 Live Bidirectional Audio</span>
+              <span>Click any avatar below to define their Sales or Interview persona</span>
               <span aria-hidden="true">·</span>
               <span>Instant Barge-In</span>
               <span aria-hidden="true">·</span>
-              <span>1 FPS Live Screen-Share Vision</span>
+              <span>Live Screen-Share Vision</span>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Mode Segmented Control */}
-            <div className="flex items-center gap-1 p-1 bg-[#0d121c] border border-slate-800 rounded-xl">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Quick Scenario Bar */}
+            <div className="flex flex-wrap items-center gap-1 p-1 bg-[#0d121c] border border-slate-800 rounded-xl">
               <button
                 type="button"
                 disabled={isCallActive}
-                onClick={() => setMode('interview')}
-                className={`px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
-                  mode === 'interview'
+                onClick={() => handleQuickSwitchScenario('sales', 'discovery')}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+                  activeSessionConfig.track === 'sales' && activeSessionConfig.salesScenario === 'discovery'
                     ? 'bg-indigo-600 text-white'
                     : 'text-slate-400 hover:text-white disabled:opacity-50'
                 }`}
               >
-                Tech Interview (Project Proof)
+                Open Discovery
               </button>
               <button
                 type="button"
                 disabled={isCallActive}
-                onClick={() => setMode('agency-pitch')}
-                className={`px-3.5 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
-                  mode === 'agency-pitch'
+                onClick={() => handleQuickSwitchScenario('sales', 'krechet-10')}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+                  activeSessionConfig.track === 'sales' && activeSessionConfig.salesScenario === 'krechet-10'
                     ? 'bg-indigo-600 text-white'
                     : 'text-slate-400 hover:text-white disabled:opacity-50'
                 }`}
               >
-                KRECHET Pitch + Screen Share
+                KRECHET 10-Seat
+              </button>
+              <button
+                type="button"
+                disabled={isCallActive}
+                onClick={() => handleQuickSwitchScenario('sales', 'krechet-20')}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+                  activeSessionConfig.track === 'sales' && activeSessionConfig.salesScenario === 'krechet-20'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-slate-400 hover:text-white disabled:opacity-50'
+                }`}
+              >
+                KRECHET 20-Seat
+              </button>
+              <button
+                type="button"
+                disabled={isCallActive}
+                onClick={() => handleQuickSwitchScenario('sales', 'krechet-whitelabel')}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+                  activeSessionConfig.track === 'sales' && activeSessionConfig.salesScenario === 'krechet-whitelabel'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-slate-400 hover:text-white disabled:opacity-50'
+                }`}
+              >
+                White-Label
+              </button>
+              <button
+                type="button"
+                disabled={isCallActive}
+                onClick={() => handleQuickSwitchScenario('interview')}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+                  activeSessionConfig.track === 'interview'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-slate-400 hover:text-white disabled:opacity-50'
+                }`}
+              >
+                Job Interview
               </button>
             </div>
+
+            <button
+              type="button"
+              disabled={isCallActive}
+              onClick={() => setSetupModalAgentId(selectedAgent.id)}
+              className="px-3.5 py-2 rounded-xl bg-[#0d121c] hover:bg-slate-800 border border-slate-800 text-xs font-medium text-white flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Edit Persona &amp; Role</span>
+            </button>
 
             <button
               type="button"
@@ -447,16 +608,18 @@ export default function VideoInterviewStudioPage() {
           </div>
         )}
 
-        {/* Agent Selector Strip (Charlie, Joey, Katy + Executive Panel) */}
+        {/* Agent Selector Strip — Clicking any avatar opens Sales vs Interview Role & Persona Setup */}
         <section className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           {agents.map((ag) => {
             const selected = ag.id === selectedAgent.id;
+            const agVoice = resolveAgentVoice(ag);
+            const agCfg = savedConfigs[ag.id];
             return (
               <button
                 key={ag.id}
                 type="button"
                 disabled={isCallActive}
-                onClick={() => setSelectedAgentId(ag.id)}
+                onClick={() => handleAvatarCardClick(ag)}
                 className={`text-left p-3 rounded-xl border transition-colors flex items-center gap-3 ${
                   selected
                     ? 'bg-[#111827] border-indigo-500 text-white'
@@ -468,6 +631,12 @@ export default function VideoInterviewStudioPage() {
                     src={ag.portraitUrl}
                     alt={ag.displayName}
                     referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      if (ag.fallbackSheetUrl && e.currentTarget.src.indexOf(ag.fallbackSheetUrl) === -1) {
+                        e.currentTarget.src = ag.fallbackSheetUrl;
+                        e.currentTarget.style.objectPosition = '82% 18%';
+                      }
+                    }}
                     className="w-full h-full object-cover object-[50%_18%]"
                   />
                 </div>
@@ -475,12 +644,14 @@ export default function VideoInterviewStudioPage() {
                   <div className="flex items-center justify-between gap-1.5">
                     <span className="text-sm font-semibold text-white truncate">{ag.displayName}</span>
                     <span className="text-[11px] font-mono text-slate-400 shrink-0">
-                      {ag.voice?.geminiLiveVoice}
+                      {agVoice.liveVoice}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400 truncate mt-0.5">{ag.roleTitle}</p>
-                  <p className="text-[11px] text-slate-500 line-clamp-1 mt-1">
-                    {ag.appearance?.appearanceNotes}
+                  <p className="text-xs text-slate-400 truncate mt-0.5">
+                    {agCfg ? getScenarioSummaryLabel(agCfg) : ag.roleTitle}
+                  </p>
+                  <p className="text-[11px] text-indigo-300 truncate mt-1">
+                    Click to set role &amp; launch
                   </p>
                 </div>
               </button>
@@ -488,13 +659,69 @@ export default function VideoInterviewStudioPage() {
           })}
         </section>
 
-        {/* Main Studio Grid: 8-Col 3D Video Stage + 4-Col Live Transcript & Adaptive Pressure */}
+        {/* Active Session Brief Bar */}
+        <div className="px-4 py-3 rounded-xl bg-[#0d121c] border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="min-w-0 space-y-0.5">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="font-semibold text-white">
+                {selectedAgent.displayName} as {activeSessionConfig.counterpartRole || selectedAgent.roleTitle}
+              </span>
+              <span aria-hidden="true" className="text-slate-600">·</span>
+              <span className="text-slate-300">{activeSessionConfig.companyName || selectedAgent.companyName}</span>
+              <span aria-hidden="true" className="text-slate-600">·</span>
+              <span className="text-indigo-300">
+                {activeSessionConfig.track === 'interview'
+                  ? `Hiring for: ${activeSessionConfig.targetPosition || 'AI Software Engineer'}`
+                  : SALES_SCENARIO_OPTIONS.find((s) => s.id === activeSessionConfig.salesScenario)?.label || 'Sales Call'}
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 line-clamp-1">
+              {activeSessionConfig.personaBrief}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <select
+              disabled={isCallActive}
+              value={resolvedVoice.liveVoice}
+              onChange={(e) => saveAgentVoiceOverride(selectedAgent.id, e.target.value)}
+              aria-label="Select agent voice"
+              className="rounded-lg bg-[#080b11] border border-slate-800 px-2.5 py-1.5 text-xs font-medium text-white focus:outline-none disabled:opacity-50"
+            >
+              {GEMINI_LIVE_VOICES.map((v) => (
+                <option key={v.id} value={v.id} className="bg-slate-900 text-white">
+                  {v.label}
+                </option>
+              ))}
+            </select>
+
+            {selectedAgent.referenceVoiceUrl && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (refAudioRef.current) {
+                    refAudioRef.current.pause();
+                    refAudioRef.current = null;
+                  }
+                  const audio = new Audio(selectedAgent.referenceVoiceUrl);
+                  refAudioRef.current = audio;
+                  audio.play().catch(() => {});
+                }}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-indigo-300 flex items-center gap-1 whitespace-nowrap shrink-0"
+              >
+                <Volume2 className="w-3.5 h-3.5" />
+                <span>Ref Sample</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Main Studio Grid: 8-Col Live Video Stage + 4-Col Live Transcript & Adaptive Pressure */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-          {/* Left: 3D Human Avatar Viewport + Screen Share Split */}
+          {/* Left: Photorealistic Avatar Viewport + Screen Share Split */}
           <div className="lg:col-span-8 flex flex-col">
             <div className="relative w-full aspect-[16/10] min-h-[420px] rounded-2xl overflow-hidden border border-slate-800 bg-[#0b101b]">
               <div className={`w-full h-full grid ${isScreenSharing ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
-                {/* 3D Human Avatar Stage */}
                 <div className="relative w-full h-full">
                   <HumanAgent3DAvatar
                     agent={selectedAgent}
@@ -505,7 +732,7 @@ export default function VideoInterviewStudioPage() {
                   />
                 </div>
 
-                {/* Live Shared Screen Preview (KRECHET Academy / Architecture Diagram) */}
+                {/* Live Shared Screen Preview */}
                 <div className={`${isScreenSharing ? 'block' : 'hidden'} relative w-full h-full bg-black border-l border-slate-800`}>
                   <video
                     ref={screenVideoRef}
@@ -520,23 +747,23 @@ export default function VideoInterviewStudioPage() {
                 </div>
               </div>
 
-              {/* Minimal Top-Left Identity Overlay (Solid RGBA — Zero backdrop-blur over WebGL) */}
-              <div className="absolute top-4 left-4 z-10 px-3.5 py-2 rounded-xl bg-[#090d16]/90 border border-slate-800/90 pointer-events-none">
-                <div className="text-sm font-semibold text-white">
-                  {selectedAgent.displayName}
+              {/* Minimal Top-Left Identity Overlay */}
+              <div className="absolute top-4 left-4 z-10 px-3.5 py-2 rounded-xl bg-[#090d16]/90 border border-slate-800/90 pointer-events-none max-w-[75%]">
+                <div className="text-sm font-semibold text-white truncate">
+                  {selectedAgent.displayName} · {activeSessionConfig.counterpartRole || selectedAgent.roleTitle}
                 </div>
-                <div className="flex items-center gap-1.5 text-[11px] text-slate-400 font-mono tabular-nums">
-                  <span>{selectedAgent.companyName}</span>
+                <div className="flex items-center gap-1.5 text-[11px] text-slate-400 font-mono tabular-nums truncate">
+                  <span className="truncate">{activeSessionConfig.companyName || selectedAgent.companyName}</span>
                   <span aria-hidden="true">·</span>
-                  <span>
+                  <span className="shrink-0">
                     {isCallActive
                       ? `${callState.charAt(0).toUpperCase() + callState.slice(1)} · ${formatClock(elapsedSeconds)}`
-                      : 'Ready for video call'}
+                      : 'Ready'}
                   </span>
                 </div>
               </div>
 
-              {/* User Webcam Self-View PiP (Bottom-Left when enabled so top-right stays clear) */}
+              {/* User Webcam Self-View PiP */}
               <div className={`${isUserCamOn ? 'block' : 'hidden'} absolute bottom-20 left-4 z-10 w-36 aspect-video rounded-xl overflow-hidden border border-slate-700 bg-slate-950 shadow-lg`}>
                 <video
                   ref={userVideoRef}
@@ -557,7 +784,7 @@ export default function VideoInterviewStudioPage() {
                 </div>
               )}
 
-              {/* Collapsible Unified Bottom Control Dock (Zero backdrop-filter over WebGL) */}
+              {/* Collapsible Unified Bottom Control Dock */}
               <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center max-w-[94vw]">
                 <button
                   type="button"
@@ -573,10 +800,10 @@ export default function VideoInterviewStudioPage() {
                     {!isCallActive ? (
                       <button
                         type="button"
-                        onClick={startLiveCall}
+                        onClick={() => startLiveCall()}
                         className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-colors whitespace-nowrap shrink-0"
                       >
-                        Start Live Video Call
+                        Start Live Call
                       </button>
                     ) : (
                       <button
@@ -652,7 +879,11 @@ export default function VideoInterviewStudioPage() {
                 </div>
               ) : (
                 <p className="text-xs text-slate-400">
-                  Baseline session: {selectedAgent.displayName} will probe concrete project metrics and tradeoffs, then adapt to your weak spots on future calls.
+                  {effectiveMode === 'discovery'
+                    ? `Discovery mode: ${selectedAgent.displayName} will guard root pain until you ask sharp diagnostic questions before pitching an app or service.`
+                    : effectiveMode === 'agency-pitch'
+                    ? `KRECHET pitch mode: ${selectedAgent.displayName} will test simulation stickiness, seat utilization, and ROI.`
+                    : `Interview mode: ${selectedAgent.displayName} will probe concrete architecture tradeoffs for ${activeSessionConfig.targetPosition || 'your target role'}.`}
                 </p>
               )}
             </div>
@@ -661,7 +892,7 @@ export default function VideoInterviewStudioPage() {
             <div className="flex-1 p-4 overflow-y-auto space-y-3 max-h-[300px] lg:max-h-none">
               {transcriptTurns.length === 0 ? (
                 <div className="text-xs text-slate-500 leading-relaxed py-6 text-center">
-                  Start the live video call to speak with {selectedAgent.displayName}. Interrupt naturally at any time—or share your screen to walk through KRECHET Academy or an architecture diagram.
+                  Click any avatar card above to customize the Sales or Interview persona, or click Start Live Call to jump right in with {selectedAgent.displayName}.
                 </div>
               ) : (
                 transcriptTurns.map((turn, idx) => (
@@ -707,7 +938,7 @@ export default function VideoInterviewStudioPage() {
           <section className="p-6 rounded-2xl bg-[#0d121c] border border-slate-800 space-y-6">
             {isEvaluating ? (
               <div className="text-sm text-slate-300">
-                Evaluating your live transcript with {selectedAgent.displayName} and updating adaptive pressure directives...
+                Evaluating your live session with {selectedAgent.displayName} and updating adaptive pressure directives...
               </div>
             ) : debriefReport ? (
               <>
@@ -727,7 +958,7 @@ export default function VideoInterviewStudioPage() {
                     </div>
                     <button
                       type="button"
-                      onClick={startLiveCall}
+                      onClick={() => startLiveCall()}
                       className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white flex items-center gap-1.5 transition-colors whitespace-nowrap"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
@@ -751,7 +982,6 @@ export default function VideoInterviewStudioPage() {
                 )}
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Learned Weak Areas + Pressure Directives */}
                   <div className="space-y-3">
                     <h3 className="text-sm font-semibold text-white">
                       Weak Areas Queued for Next Session Pressure
@@ -770,7 +1000,6 @@ export default function VideoInterviewStudioPage() {
                     ))}
                   </div>
 
-                  {/* Concrete Rewrites */}
                   <div className="space-y-3">
                     <h3 className="text-sm font-semibold text-white">
                       Stronger Answer &amp; Pitch Rewrites
@@ -802,7 +1031,13 @@ export default function VideoInterviewStudioPage() {
                   <div className="flex flex-wrap items-center gap-2 text-slate-300">
                     <span className="font-semibold text-white">{s.personaName}</span>
                     <span aria-hidden="true">·</span>
-                    <span>{s.mode === 'agency-pitch' ? 'KRECHET Pitch' : 'Tech Interview'}</span>
+                    <span>
+                      {s.mode === 'discovery'
+                        ? 'Open Discovery'
+                        : s.mode === 'agency-pitch'
+                        ? 'KRECHET Pitch'
+                        : 'Job Interview'}
+                    </span>
                     <span aria-hidden="true">·</span>
                     <span className="text-slate-400 truncate max-w-md">{s.summary}</span>
                   </div>
@@ -815,6 +1050,27 @@ export default function VideoInterviewStudioPage() {
           </section>
         )}
       </main>
+
+      <AvatarSessionSetupModal
+        isOpen={Boolean(setupModalAgentId)}
+        agent={modalAgent}
+        initialConfig={modalAgent ? savedConfigs[modalAgent.id] : null}
+        dossier={dossier}
+        onClose={() => setSetupModalAgentId(null)}
+        onSaveOnly={(nextCfg) => {
+          if (modalAgent) {
+            persistAgentSessionConfig(modalAgent.id, nextCfg);
+          }
+          setSetupModalAgentId(null);
+        }}
+        onLaunchSession={(nextCfg) => {
+          const targetAgent = modalAgent || selectedAgent;
+          persistAgentSessionConfig(targetAgent.id, nextCfg);
+          setSelectedAgentId(targetAgent.id);
+          setSetupModalAgentId(null);
+          startLiveCall(targetAgent, nextCfg);
+        }}
+      />
 
       <DossierDrawerModal
         isOpen={isDossierOpen}

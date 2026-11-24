@@ -54,6 +54,7 @@ import {
 import { GoogleGenAI } from '@google/genai';
 import { getLearningProgress, LESSON_PATH, recordLearningTurn } from '../lib/learningProgress';
 import { getAdaptiveDifficulty } from '../lib/trainingProgress';
+import { resolveCoachVoice, resolveProspectVoice } from '../lib/voiceResolver';
 
 const SCRIPT_TEMPLATES = BUILTIN_TEMPLATES;
 const COACH_CONVERSATION_STORAGE_KEY = 'scriptmaster_coach_messages_v2';
@@ -268,9 +269,10 @@ export default function CoachPage({ setScript: setGlobalScript, embedded = false
     setVoiceError(null);
 
     try {
-      const voiceId = persona === 'hank' ? 'Charon' : 'Fenrir';
-      const gender = persona === 'sarah' || persona === 'elena' ? 'female' : 'male';
-      const ttsRes = await getGeminiTTSAudio(cleanText, voiceId, gender, persona);
+      const resolved = persona === 'hank' || persona === 'sarah'
+        ? resolveProspectVoice(persona)
+        : resolveCoachVoice(persona);
+      const ttsRes = await getGeminiTTSAudio(cleanText, resolved.ttsVoice, resolved.gender, resolved.personaKey);
       
       if (ttsRes && ttsRes.audioBase64) {
         const audio = new Audio(`data:${ttsRes.mimeType || 'audio/wav'};base64,${ttsRes.audioBase64}`);
@@ -299,7 +301,7 @@ export default function CoachPage({ setScript: setGlobalScript, embedded = false
         : 'Coach voice is unavailable right now. Click Hear Coach to retry.';
       setVoiceError(message);
       if (error?.name !== 'NotAllowedError') {
-        fallbackBrowserSpeak(cleanText, gender);
+        fallbackBrowserSpeak(cleanText, persona === 'sarah' || persona === 'elena' ? 'female' : 'male');
       }
       return;
     }
@@ -434,7 +436,7 @@ export default function CoachPage({ setScript: setGlobalScript, embedded = false
       const liveMemoryContext = `\n\nPERSISTED STUDENT MEMORY (continue from this; do not ask the student to repeat it):\n${formatMemoryForPrompt(coachMemory) || 'No saved product details yet.'}`;
       const liveScriptContext = `\n\nSAVED SCRIPT CONTEXT (background only; do not automatically pull these old lines into the lesson):\n- Target: ${selectedProspect?.name || activeScript?.target || 'selected contractor'}\n- Product/value context: ${activeScript?.value || activeScript?.painValue?.value || ''}\nRULE: At the beginner/guided stage, Coach must choose the exact expert line; never ask the student how to say it. State the line in quotation marks so the floating Coach's Line display can pull it up. Do not display or reuse an old saved hook unless the student explicitly asks to practice that saved script. Do not overwrite the saved script unless the student explicitly asks to save a revision. If the student corrects the business, says they are not selling something, asks a question, or says the line is wrong, treat that as a conversation turn—not a rehearsal attempt—and respond to the correction before continuing.`;
       const session = new GeminiLiveSession({
-        voiceName: 'Fenrir',
+        voiceName: resolveCoachVoice('marcus').liveVoice,
         micStream: micStreamRef.current,
         systemInstruction: `${MARCUS_CLASSROOM_INSTRUCTOR_PROMPT}${liveMemoryContext}${liveScriptContext}`,
         initialPrompt: `Begin the student's current lesson: ${currentLesson.title} (${currentLesson.id}). Their learning stage is ${currentProgress.stage}, with ${currentProgress.baselineTurns} prior learning turns and ${currentProgress.completedLessons.length} completed lessons. The student sells ${coachMemory.productOrService || 'the product they previously described'}${coachMemory.offerOptions?.length ? ` with these offer options: ${coachMemory.offerOptions.join(', ')}` : ''}. Continue from this saved progress; do not reset to Lesson 1 and do not ask them to re-enter product details. Explain one concept, ask one question, and wait for their answer before advancing.`,

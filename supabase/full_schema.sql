@@ -198,10 +198,74 @@ BEFORE UPDATE ON public.coach_conversations
 FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 -- ==============================================================================
--- 7. PERFORMANCE INDEXES
+-- 7. VIDEO INTERVIEW & ADAPTIVE COACHING TABLES (ccpractice Upgrade)
+-- ==============================================================================
+ALTER TABLE public.practice_sessions
+  ADD COLUMN IF NOT EXISTS scenario_type text DEFAULT 'cold-call',
+  ADD COLUMN IF NOT EXISTS overall_score integer DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS public.candidate_dossiers (
+  user_id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  candidate_title text,
+  resume_data jsonb DEFAULT '{}'::jsonb,
+  job_description_data jsonb DEFAULT '{}'::jsonb,
+  portfolio_urls jsonb DEFAULT '[]'::jsonb,
+  krechet_offer jsonb DEFAULT '{}'::jsonb,
+  updated_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE public.candidate_dossiers ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users manage own dossier" ON public.candidate_dossiers;
+CREATE POLICY "Users manage own dossier" ON public.candidate_dossiers
+  FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+CREATE TABLE IF NOT EXISTS public.adaptive_weak_areas (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE,
+  skill_key text NOT NULL,
+  skill_label text NOT NULL,
+  mode text DEFAULT 'interview',
+  current_score integer DEFAULT 50,
+  evidence text DEFAULT '',
+  pressure_directive text DEFAULT '',
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE (user_id, skill_key)
+);
+
+ALTER TABLE public.adaptive_weak_areas ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users manage own weak areas" ON public.adaptive_weak_areas;
+CREATE POLICY "Users manage own weak areas" ON public.adaptive_weak_areas
+  FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+CREATE TABLE IF NOT EXISTS public.agent_interviewers (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE,
+  agent_id text NOT NULL,
+  display_name text NOT NULL,
+  faction text DEFAULT 'CustomPanel',
+  role_title text DEFAULT '',
+  gemini_voice text DEFAULT 'Charon',
+  agent_payload jsonb DEFAULT '{}'::jsonb,
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE (user_id, agent_id)
+);
+
+ALTER TABLE public.agent_interviewers ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users manage own agents" ON public.agent_interviewers;
+CREATE POLICY "Users manage own agents" ON public.agent_interviewers
+  FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+-- ==============================================================================
+-- 8. PERFORMANCE INDEXES
 -- ==============================================================================
 CREATE INDEX IF NOT EXISTS idx_scripts_user_id ON public.scripts(user_id);
 CREATE INDEX IF NOT EXISTS idx_scripts_created_at ON public.scripts(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_practice_sessions_user_id ON public.practice_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_practice_sessions_created_at ON public.practice_sessions(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_coach_conversations_user_id ON public.coach_conversations(user_id);
+CREATE INDEX IF NOT EXISTS idx_adaptive_weak_areas_user_id ON public.adaptive_weak_areas(user_id);
+CREATE INDEX IF NOT EXISTS idx_agent_interviewers_user_id ON public.agent_interviewers(user_id);
+

@@ -25,18 +25,26 @@ app.use((_req, res, next) => {
 
 app.use(express.json({ limit: '25mb' }));
 
-function getValidGeminiKey(explicitKey?: string): string {
-  const candidates = [
-    explicitKey,
+function getCandidateGeminiKeys(explicitKey?: string): string[] {
+  // Prefer AI Studio's server-managed GEMINI_API_KEY first so gemini-3.8-* and gemini-4-*
+  // models always authenticate cleanly even if an older external key was saved in localStorage.
+  const raw = [
     process.env.GEMINI_API_KEY,
+    explicitKey,
     process.env.VITE_GEMINI_API_KEY,
   ];
-  for (const k of candidates) {
-    if (k && typeof k === 'string' && k.trim().length > 20 && !k.includes('YOUR_')) {
-      return k.trim();
+  const valid: string[] = [];
+  for (const k of raw) {
+    const trimmed = typeof k === 'string' ? k.trim() : '';
+    if (trimmed.length > 20 && !trimmed.includes('YOUR_') && !valid.includes(trimmed)) {
+      valid.push(trimmed);
     }
   }
-  return '';
+  return valid;
+}
+
+function getValidGeminiKey(explicitKey?: string): string {
+  return getCandidateGeminiKeys(explicitKey)[0] || '';
 }
 
 const serverApiKey = getValidGeminiKey();
@@ -379,9 +387,10 @@ app.post('/api/gemini/fetch-url-context', async (req, res) => {
 // ============================================================================
 app.post('/api/gemini/video-call-debrief', async (req, res) => {
   const {
-    mode = 'interview', // 'interview' | 'agency-pitch' | 'contractor'
+    mode = 'interview', // 'interview' | 'agency-pitch' | 'discovery'
     personaName = 'Interviewer',
     personaRole = 'Hiring Manager',
+    sessionConfig = null,
     durationSeconds = 0,
     transcriptTurns = [],
     screenShared = false,
@@ -419,24 +428,47 @@ app.post('/api/gemini/video-call-debrief', async (req, res) => {
     });
   }
 
-  const competencyList =
-    mode === 'agency-pitch'
-      ? [
-          { key: 'agency_discovery', label: 'Agency Pain Discovery' },
-          { key: 'screen_share_demo', label: 'Screen-Share & Demo Flow' },
-          { key: 'krechet_value', label: 'Simulation & Workshop Proof' },
-          { key: 'objection_handling', label: 'ROI & Budget Objection Handling' },
-          { key: 'executive_frame', label: 'Executive Frame & Barge-In Recovery' },
-          { key: 'closing_control', label: 'Closing & Next-Step Control' },
-        ]
-      : [
-          { key: 'architecture_depth', label: 'Project Architecture Depth' },
-          { key: 'solutions_framing', label: 'Solutions Discovery & Framing' },
-          { key: 'concise_clarity', label: 'Concise Executive Clarity' },
-          { key: 'tradeoff_defense', label: 'Trade-off & Constraint Defense' },
-          { key: 'impact_proof', label: 'Project Impact & Metrics Proof' },
-          { key: 'vocal_composure', label: 'Vocal Presence & Barge-In Composure' },
-        ];
+  const salesScenario = sessionConfig?.salesScenario || (mode === 'discovery' ? 'discovery' : 'krechet-10');
+  const isDiscovery = mode === 'discovery' || (sessionConfig?.track === 'sales' && salesScenario === 'discovery');
+  const isAgencyPitch =
+    !isDiscovery && (mode === 'agency-pitch' || sessionConfig?.track === 'sales');
+
+  const competencyList = isDiscovery
+    ? [
+        { key: 'rapport_frame', label: 'Opening Frame & Agenda Control' },
+        { key: 'symptom_to_root', label: 'Surface-to-Root Pain Discovery' },
+        { key: 'quantifying_pain', label: 'Quantifying Cost of Inaction' },
+        { key: 'tailored_solution_fit', label: 'Tailored App / Service Positioning' },
+        { key: 'discovery_objections', label: 'Skepticism & Timing Navigation' },
+        { key: 'next_step_commitment', label: 'Scoped Next-Step Commitment' },
+      ]
+    : isAgencyPitch
+    ? [
+        { key: 'agency_discovery', label: 'Agency Pain Discovery' },
+        { key: 'screen_share_demo', label: 'Screen-Share & Demo Flow' },
+        { key: 'krechet_value', label: 'Simulation & Workshop Proof' },
+        { key: 'package_roi_defense', label: 'Seat / White-Label ROI Defense' },
+        { key: 'executive_frame', label: 'Executive Frame & Barge-In Recovery' },
+        { key: 'closing_control', label: 'Closing & Next-Step Control' },
+      ]
+    : [
+        { key: 'architecture_depth', label: 'Project Architecture Depth' },
+        { key: 'solutions_framing', label: 'Solutions Discovery & Framing' },
+        { key: 'concise_clarity', label: 'Concise Executive Clarity' },
+        { key: 'tradeoff_defense', label: 'Trade-off & Constraint Defense' },
+        { key: 'impact_proof', label: 'Project Impact & Metrics Proof' },
+        { key: 'vocal_composure', label: 'Vocal Presence & Barge-In Composure' },
+      ];
+
+  const scenarioDescription = isDiscovery
+    ? `Open B2B Sales Discovery Call — Goal: diagnose root workflow pain BEFORE pitching a tailored app, automation, or service`
+    : isAgencyPitch
+    ? salesScenario === 'krechet-whitelabel'
+      ? `B2B Agency Sales Call pitching KRECHET Academy Premium White-Label License`
+      : salesScenario === 'krechet-20'
+      ? `B2B Agency Sales Call pitching KRECHET Academy 20-Seat Agency Growth Package`
+      : `B2B Agency Sales Call pitching KRECHET Academy 10-Seat Agency Team Package`
+    : `Live Project-Based Job Interview for ${sessionConfig?.targetPosition || careerDossier?.jobDescription?.roleTitle || 'AI Software Engineer / Solutions Architect'} at ${sessionConfig?.companyName || careerDossier?.jobDescription?.companyName || 'Target Company'}`;
 
   const transcriptText = (transcriptTurns || [])
     .map((t: any) => `[${t.time || '00:00'}] ${t.speaker}: ${t.text}`)
@@ -445,23 +477,25 @@ app.post('/api/gemini/video-call-debrief', async (req, res) => {
   const prompt = `You are an elite, candid executive performance evaluator reviewing a completed LIVE VIDEO CALL.
 
 CALL METADATA:
-- Mode: ${mode === 'agency-pitch' ? 'B2B Video Sales Call pitching KRECHET Academy (Digital Marketing Simulations & Workshops) to a Marketing Agency' : mode === 'interview' ? 'Live Video Job Interview (AI Software Engineer — Application Developer / Solutions Architect, project-based proof)' : 'Live Cold Call Roleplay'}
-- Counterpart: ${personaName} (${personaRole})
+- Scenario: ${scenarioDescription}
+- Counterpart: ${personaName} (${sessionConfig?.counterpartRole || personaRole} at ${sessionConfig?.companyName || 'Company'})
+${sessionConfig?.personaBrief ? `- Defined Session Persona & Context: ${sessionConfig.personaBrief}` : ''}
 - Duration: ${durationSeconds} seconds
 - User Spoken/Typed Words: ${totalUserWords}
 - Screen Share Used: ${screenShared ? 'YES (Live screen/deck presented)' : 'NO'}
 - Live Barge-In Interruptions Handled: ${bargeInCount}
 - Prior Weak Areas Under Pressure Test: ${previousWeakAreas.length ? previousWeakAreas.map((w: any) => `${w.label} (${w.score}/100): ${w.note}`).join(' | ') : 'First baseline session'}
-${careerDossier?.jobDescription?.roleTitle ? `- Target Role: ${careerDossier.jobDescription.roleTitle} at ${careerDossier.jobDescription.companyName || ''}` : ''}
 
 EXACT CALL TRANSCRIPT:
 ${transcriptText}
 
 EVALUATION MANDATE:
-1. Be strictly honest and grounded ONLY in what the user actually said. Never inflate scores on short or vague answers.
+1. Be strictly honest and grounded ONLY in what the user actually said. Never inflate scores on short, premature, or vague answers.
+   ${isDiscovery ? '- In Open Discovery, penalize premature feature-pitching if the caller pitched an app/service before uncovering root workflow pain and cost of inaction.' : ''}
+   ${isAgencyPitch ? `- Evaluate specifically how well the caller positioned and defended the ${salesScenario === 'krechet-whitelabel' ? 'Premium White-Label license' : salesScenario === 'krechet-20' ? '20-Seat package' : '10-Seat package'} against agency objections.` : ''}
 2. Score EACH of these exact 6 competencies (0 to 100) using their exact keys:
 ${competencyList.map((c) => `   - key: "${c.key}", label: "${c.label}"`).join('\n')}
-3. Identify the top 2-3 WEAK AREAS with concrete evidence from the transcript and an explicit **pressureDirective** telling the AI interviewer/prospect EXACTLY how to push harder on that weak area in the NEXT live call!
+3. Identify the top 2-3 WEAK AREAS with concrete evidence from the transcript and an explicit **pressureDirective** telling the AI counterpart EXACTLY how to push harder on that weak area in the NEXT live call!
 4. Identify 2-3 concrete STRENGTHS grounded in the transcript.
 5. Provide 2 concrete "What You Said -> Stronger Version" rewrites.
 6. Provide a concise **nextCallPressurePlan** summarizing what the AI will drill harder next session.`;
@@ -597,17 +631,139 @@ app.post('/api/gemini/research-prospect', async (req, res) => {
 // ============================================================================
 // 7. Server-Side TTS using gemini-3.8-flash-lite-tts
 // ============================================================================
+const PERSONA_SPEECH_STYLES: Record<string, string> = {
+  charlie:
+    'Gravelly, laid-back middle-aged Southern Appalachian male drawl, calm streetwise cadence, slight rasp, unhurried phrasing',
+  joey:
+    'Relaxed, slightly husky Appalachian early-30s male drawl, laid-back unhurried conversational pacing, natural low-mid register',
+  katy:
+    'Confident, street-smart American female voice, clear articulation and natural warmth',
+  claire:
+    'Articulate, composed executive American female hiring manager voice',
+  rachel:
+    'Crisp, fast-moving agency managing partner female voice',
+  marcus:
+    'Warm, grounded, authoritative executive sales & career mentor male voice',
+  elena:
+    'Sharp, encouraging enterprise sales coach female voice',
+  hank:
+    'Gruff, skeptical blue-collar contractor male voice on a jobsite',
+  carl:
+    'Blunt, busy HVAC/roofing owner male voice',
+  delbert:
+    'Weathered, old-school West Virginia contractor male drawl',
+  bo:
+    'Direct, fast-talking field estimator male voice',
+  sarah:
+    'Polished, analytical commercial operations director female voice',
+};
+
+const PERSONA_DEEPGRAM_MODELS: Record<string, string> = {
+  charlie: 'aura-zeus-en',
+  joey: 'aura-perseus-en',
+  katy: 'aura-luna-en',
+  claire: 'aura-athena-en',
+  rachel: 'aura-asteria-en',
+  marcus: 'aura-helios-en',
+  elena: 'aura-stella-en',
+  hank: 'aura-orion-en',
+  carl: 'aura-orion-en',
+  delbert: 'aura-arcas-en',
+  bo: 'aura-angus-en',
+  sarah: 'aura-asteria-en',
+};
+
+const VALID_GEMINI_VOICES = [
+  'Puck',
+  'Charon',
+  'Kore',
+  'Fenrir',
+  'Aoede',
+  'Zephyr',
+  'Orus',
+  'Leda',
+  'Enceladus',
+  'Iapetus',
+  'Umbriel',
+  'Algieba',
+  'Despina',
+  'Erinome',
+  'Algenib',
+  'Rasalgethi',
+  'Laomedeia',
+  'Achernar',
+  'Alnilam',
+  'Schedar',
+  'Gacrux',
+  'Pulcherrima',
+  'Achird',
+  'Zubenelgenubi',
+  'Vindemiatrix',
+  'Sadachbia',
+  'Sadaltager',
+  'Sulafat',
+  'Autonoe',
+];
+
 app.post('/api/gemini/tts', async (req, res) => {
-  const { text, voiceName = 'Fenrir', gender = 'male', personaKey = 'marcus' } = req.body || {};
+  const { text, voiceName = 'Orus', gender = 'male', personaKey = 'marcus' } = req.body || {};
   if (!text) return res.status(400).json({ error: 'Text is required for TTS' });
 
-  const customApiKey = (req.headers['x-gemini-api-key'] || req.body?.geminiApiKey) as string;
-  const effectiveKey = getValidGeminiKey(customApiKey);
+  const normalizedPersona = String(personaKey || '').toLowerCase();
+  const requestedVoice = String(voiceName || '').trim();
 
-  try {
-    if (effectiveKey) {
-      const genAiClient = getGenAI(effectiveKey);
-      const effectiveVoice = voiceName || (gender === 'female' ? 'Aoede' : 'Fenrir');
+  const customDgKey = (req.headers['x-deepgram-api-key'] || req.body?.deepgramApiKey) as string;
+  const effectiveDgKey =
+    customDgKey && typeof customDgKey === 'string' && customDgKey.trim().length > 10 && !customDgKey.includes('YOUR_')
+      ? customDgKey.trim()
+      : deepgramApiKey;
+
+  // 1. If user explicitly chose a Deepgram Aura voice (`aura-*`), call Deepgram directly with that exact voice!
+  if (requestedVoice.startsWith('aura-') && effectiveDgKey && effectiveDgKey.length > 10 && !effectiveDgKey.includes('YOUR_')) {
+    try {
+      const dgRes = await fetch(`https://api.deepgram.com/v1/speak?model=${encodeURIComponent(requestedVoice)}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Token ${effectiveDgKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text: text.slice(0, 1500) }),
+      });
+      if (dgRes.ok) {
+        const buffer = Buffer.from(await dgRes.arrayBuffer());
+        return res.json({
+          audioBase64: buffer.toString('base64'),
+          mimeType: 'audio/mp3',
+          engine: 'deepgram-direct',
+          voiceUsed: requestedVoice,
+        });
+      }
+    } catch (dgErr: any) {
+      console.warn('Direct Deepgram voice notice:', dgErr?.message);
+    }
+  }
+
+  // 2. Gemini 3.8 TTS (`gemini-3.8-flash-lite-tts`) with multi-key fallback and RIFF WAV detection
+  const customApiKey = (req.headers['x-gemini-api-key'] || req.body?.geminiApiKey) as string;
+  const candidateKeys = getCandidateGeminiKeys(customApiKey);
+  const effectiveGeminiVoice = VALID_GEMINI_VOICES.includes(requestedVoice)
+    ? requestedVoice
+    : gender === 'female'
+    ? 'Kore'
+    : 'Orus';
+
+  const stylePrompt =
+    PERSONA_SPEECH_STYLES[normalizedPersona] ||
+    (gender === 'female'
+      ? 'Natural, articulate American female voice with conversational rhythm'
+      : 'Natural, authentic American male voice with conversational rhythm');
+
+  for (const keyCandidate of candidateKeys) {
+    try {
+      const genAiClient = new GoogleGenAI({
+        apiKey: keyCandidate,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+      });
       const response = await genAiClient.models.generateContent({
         model: 'gemini-3.8-flash-lite-tts',
         contents: [
@@ -617,10 +773,7 @@ app.post('/api/gemini/tts', async (req, res) => {
               {
                 text: text.slice(0, 1500),
                 speechMetadata: {
-                  style:
-                    gender === 'female'
-                      ? 'Natural, articulate, warm American female voice with human breath and natural cadence'
-                      : 'Natural, authentic, confident American male voice with human breath and natural cadence',
+                  style: stylePrompt,
                 },
               } as any,
             ],
@@ -630,7 +783,7 @@ app.post('/api/gemini/tts', async (req, res) => {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
             voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: effectiveVoice },
+              prebuiltVoiceConfig: { voiceName: effectiveGeminiVoice },
             },
           },
         },
@@ -640,35 +793,42 @@ app.post('/api/gemini/tts', async (req, res) => {
       const base64Audio = inlineAudio?.data;
       if (base64Audio) {
         const rawAudio = Buffer.from(base64Audio, 'base64');
-        const wavAudio = pcm16ToWav(rawAudio, 24000, 1);
+        // Unary gemini-3.8-flash-lite-tts already returns a complete RIFF WAV file.
+        // Only wrap in pcm16ToWav if headerless raw PCM was returned.
+        const isAlreadyWav = rawAudio.length > 44 && rawAudio.subarray(0, 4).toString('ascii') === 'RIFF';
+        const wavAudio = isAlreadyWav ? rawAudio : pcm16ToWav(rawAudio, 24000, 1);
         return res.json({
           audioBase64: wavAudio.toString('base64'),
           mimeType: 'audio/wav',
-          engine: 'gemini-live',
-          sourceMimeType: inlineAudio?.mimeType || 'audio/L16;rate=24000',
+          engine: 'gemini-3.8-tts',
+          voiceUsed: effectiveGeminiVoice,
+          sourceMimeType: inlineAudio?.mimeType || 'audio/wav',
         });
       }
+    } catch (err: any) {
+      console.warn('Gemini TTS key attempt notice:', err?.message || err);
     }
-  } catch (err: any) {
-    console.warn('Gemini TTS notice, trying Deepgram fallback:', err?.message || err);
   }
 
-  const customDgKey = (req.headers['x-deepgram-api-key'] || req.body?.deepgramApiKey) as string;
-  const effectiveDgKey =
-    customDgKey && typeof customDgKey === 'string' && customDgKey.trim().length > 10
-      ? customDgKey.trim()
-      : deepgramApiKey;
-
+  // 3. Distinct Persona Deepgram Aura Fallback (11 distinct voices — never just 2!)
   if (effectiveDgKey && effectiveDgKey.length > 10 && !effectiveDgKey.includes('YOUR_')) {
     try {
+      const voiceToDgMap: Record<string, string> = {
+        Charon: 'aura-zeus-en',
+        Puck: 'aura-perseus-en',
+        Orus: 'aura-helios-en',
+        Fenrir: 'aura-orion-en',
+        Enceladus: 'aura-arcas-en',
+        Iapetus: 'aura-angus-en',
+        Kore: 'aura-luna-en',
+        Aoede: 'aura-stella-en',
+        Zephyr: 'aura-asteria-en',
+        Leda: 'aura-athena-en',
+      };
       const deepgramModel =
-        gender === 'female'
-          ? personaKey === 'sarah'
-            ? 'aura-asteria-en'
-            : 'aura-stella-en'
-          : personaKey === 'hank'
-          ? 'aura-arcas-en'
-          : 'aura-orion-en';
+        (requestedVoice.startsWith('aura-') ? requestedVoice : voiceToDgMap[requestedVoice]) ||
+        PERSONA_DEEPGRAM_MODELS[normalizedPersona] ||
+        (gender === 'female' ? 'aura-luna-en' : 'aura-helios-en');
 
       const dgRes = await fetch(`https://api.deepgram.com/v1/speak?model=${encodeURIComponent(deepgramModel)}`, {
         method: 'POST',
@@ -685,6 +845,7 @@ app.post('/api/gemini/tts', async (req, res) => {
           audioBase64: buffer.toString('base64'),
           mimeType: 'audio/mp3',
           engine: 'deepgram-fallback',
+          voiceUsed: deepgramModel,
         });
       }
     } catch {
@@ -697,23 +858,29 @@ app.post('/api/gemini/tts', async (req, res) => {
 
 app.post('/api/deepgram/tts', async (req, res) => {
   try {
-    const { text, model = 'aura-orion-en' } = req.body || {};
-    if (!isDeepgramConfigured) {
-      return res.json({ fallback: true, message: 'Deepgram API key not configured on server' });
+    const { text, model = 'aura-helios-en' } = req.body || {};
+    const customDgKey = (req.headers['x-deepgram-api-key'] || req.body?.deepgramApiKey) as string;
+    const effectiveDgKey =
+      customDgKey && typeof customDgKey === 'string' && customDgKey.trim().length > 10 && !customDgKey.includes('YOUR_')
+        ? customDgKey.trim()
+        : deepgramApiKey;
+
+    if (!effectiveDgKey || effectiveDgKey.length < 10 || effectiveDgKey.includes('YOUR_')) {
+      return res.json({ fallback: true, message: 'Deepgram API key not configured' });
     }
     if (!text) return res.status(400).json({ error: 'Text is required for TTS' });
 
     const dgRes = await fetch(`https://api.deepgram.com/v1/speak?model=${encodeURIComponent(model)}`, {
       method: 'POST',
       headers: {
-        Authorization: `Token ${deepgramApiKey}`,
+        Authorization: `Token ${effectiveDgKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ text: text.slice(0, 1500) }),
     });
     if (!dgRes.ok) return res.json({ fallback: true, message: `Deepgram status ${dgRes.status}` });
     const buffer = Buffer.from(await dgRes.arrayBuffer());
-    res.json({ audioBase64: buffer.toString('base64'), mimeType: 'audio/mp3' });
+    res.json({ audioBase64: buffer.toString('base64'), mimeType: 'audio/mp3', voiceUsed: model });
   } catch {
     res.json({ fallback: true, message: 'Deepgram TTS fallback' });
   }
@@ -780,8 +947,20 @@ function attachGeminiLiveBridge(httpServer: http.Server) {
 
         try {
           const genAi = getGenAI(activeKey);
-          const validVoices = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede', 'Zephyr'];
-          const voiceName = validVoices.includes(msg.voiceName) ? msg.voiceName : 'Zephyr';
+          const auraToLive: Record<string, string> = {
+            'aura-orion-en': 'Orus',
+            'aura-arcas-en': 'Charon',
+            'aura-perseus-en': 'Puck',
+            'aura-angus-en': 'Iapetus',
+            'aura-helios-en': 'Enceladus',
+            'aura-zeus-en': 'Fenrir',
+            'aura-stella-en': 'Aoede',
+            'aura-asteria-en': 'Zephyr',
+            'aura-luna-en': 'Kore',
+            'aura-athena-en': 'Leda',
+          };
+          const mappedVoice = auraToLive[msg.voiceName] || msg.voiceName;
+          const voiceName = VALID_GEMINI_VOICES.includes(mappedVoice) ? mappedVoice : 'Charon';
 
           liveSession = await genAi.live.connect({
             model: 'gemini-3.8-live',

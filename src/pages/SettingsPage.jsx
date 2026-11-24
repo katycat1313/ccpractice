@@ -26,20 +26,28 @@ import {
   setSelectedProspectId 
 } from '../lib/prospectManager';
 
+import { isSupabaseLiveConfigured } from '../lib/supabaseSync';
+
 const COACH_VOICES = [
-  { id: 'Fenrir', name: 'Fenrir (Gemini Live)', gender: 'male', persona: 'Marcus Vance', tone: 'Deep, authoritative, encouraging American mentor' },
-  { id: 'Aoede', name: 'Aoede (Gemini Live)', gender: 'female', persona: 'Elena Rostova', tone: 'Articulate, sharp, confident enterprise closer' },
-  { id: 'Puck', name: 'Puck (Gemini Live)', gender: 'male', persona: 'Sales Peer', tone: 'Natural, energetic American peer closer' },
-  { id: 'aura-orion-en', name: 'Aura Orion (Deepgram)', gender: 'male', persona: 'Marcus Vance', tone: 'Natural human breath & conversational rhythm' },
-  { id: 'aura-stella-en', name: 'Aura Stella (Deepgram)', gender: 'female', persona: 'Elena Rostova', tone: 'Warm, articulate, natural female cadence' }
+  { id: 'Orus', name: 'Orus (Gemini 3.8)', gender: 'male', personaKey: 'marcus', persona: 'Marcus Vance', tone: 'Warm, measured executive sales & interview mentor' },
+  { id: 'Fenrir', name: 'Fenrir (Gemini 3.8)', gender: 'male', personaKey: 'marcus', persona: 'Marcus Vance', tone: 'Deep, bold, high-conviction coach' },
+  { id: 'Aoede', name: 'Aoede (Gemini 3.8)', gender: 'female', personaKey: 'elena', persona: 'Elena Rostova', tone: 'Articulate, sharp, confident enterprise closer' },
+  { id: 'Leda', name: 'Leda (Gemini 3.8)', gender: 'female', personaKey: 'elena', persona: 'Claire Mercer', tone: 'Composed executive strategist & hiring lead' },
+  { id: 'aura-helios-en', name: 'Aura Helios (Deepgram)', gender: 'male', personaKey: 'marcus', persona: 'Marcus Vance', tone: 'Rich studio mentor voice via Deepgram Aura' },
+  { id: 'aura-stella-en', name: 'Aura Stella (Deepgram)', gender: 'female', personaKey: 'elena', persona: 'Elena Rostova', tone: 'Warm, articulate female cadence via Deepgram Aura' }
 ];
 
 const PROSPECT_VOICES = [
-  { id: 'Charon', name: 'Charon (Gemini Live)', gender: 'male', persona: 'Hank Miller', tone: 'Gruff, skeptical American contractor in truck cab' },
-  { id: 'Zephyr', name: 'Zephyr (Gemini Live)', gender: 'female', persona: 'Sarah Chen', tone: 'Crisp, direct, commercial director' },
-  { id: 'Orus', name: 'Orus (Gemini Live)', gender: 'male', persona: 'Dave Campbell', tone: 'Calm, measured, analytical facility owner' },
-  { id: 'aura-arcas-en', name: 'Aura Arcas (Deepgram)', gender: 'male', persona: 'Hank Miller', tone: 'Grounded, authentic American contractor' },
-  { id: 'aura-asteria-en', name: 'Aura Asteria (Deepgram)', gender: 'female', persona: 'Sarah Chen', tone: 'Polished, corporate commercial buyer' }
+  { id: 'Charon', name: 'Charon (Gemini 3.8)', gender: 'male', personaKey: 'charlie', persona: 'Charlie', tone: 'Gravelly, laid-back Southern Appalachian drawl' },
+  { id: 'Iapetus', name: 'Iapetus (Gemini 3.8)', gender: 'male', personaKey: 'joey', persona: 'Joey', tone: 'Relaxed, husky early-30s Appalachian male cadence' },
+  { id: 'Kore', name: 'Kore (Gemini 3.8)', gender: 'female', personaKey: 'katy', persona: 'Katy', tone: 'Confident, street-smart operator & product lead' },
+  { id: 'Enceladus', name: 'Enceladus (Gemini 3.8)', gender: 'male', personaKey: 'delbert', persona: 'Delbert / Veteran', tone: 'Weathered West Virginia contractor drawl' },
+  { id: 'Puck', name: 'Puck (Gemini 3.8)', gender: 'male', personaKey: 'bo', persona: 'Bo / Fast Estimator', tone: 'Direct, quick-paced field estimator' },
+  { id: 'Zephyr', name: 'Zephyr (Gemini 3.8)', gender: 'female', personaKey: 'rachel', persona: 'Rachel Donovan', tone: 'Crisp agency managing partner' },
+  { id: 'aura-zeus-en', name: 'Aura Zeus (Deepgram)', gender: 'male', personaKey: 'charlie', persona: 'Charlie (Deepgram)', tone: 'Deep gravelly bass-baritone via Deepgram Aura' },
+  { id: 'aura-perseus-en', name: 'Aura Perseus (Deepgram)', gender: 'male', personaKey: 'joey', persona: 'Joey (Deepgram)', tone: 'Dry, laid-back male voice via Deepgram Aura' },
+  { id: 'aura-luna-en', name: 'Aura Luna (Deepgram)', gender: 'female', personaKey: 'katy', persona: 'Katy (Deepgram)', tone: 'Natural expressive female voice via Deepgram Aura' },
+  { id: 'aura-arcas-en', name: 'Aura Arcas (Deepgram)', gender: 'male', personaKey: 'delbert', persona: 'Hank / Delbert (Deepgram)', tone: 'Grounded contractor voice via Deepgram Aura' }
 ];
 
 export default function SettingsPage() {
@@ -64,11 +72,11 @@ export default function SettingsPage() {
     try {
       const saved = localStorage.getItem('scriptmaster_voice_settings');
       return saved ? JSON.parse(saved) : {
-        coachVoice: 'Fenrir',
+        coachVoice: 'Orus',
         prospectVoice: 'Charon'
       };
     } catch (_) {
-      return { coachVoice: 'Fenrir', prospectVoice: 'Charon' };
+      return { coachVoice: 'Orus', prospectVoice: 'Charon' };
     }
   });
 
@@ -157,18 +165,24 @@ export default function SettingsPage() {
     const updated = { ...voiceSettings, [key]: val };
     setVoiceSettings(updated);
     localStorage.setItem('scriptmaster_voice_settings', JSON.stringify(updated));
+    window.dispatchEvent(new Event('scriptmaster_voices_updated'));
+    showToast(`Active voice switched to ${val}`);
   };
 
-  const handleTestVoice = async (voiceId, gender, sampleText) => {
+  const handleTestVoice = async (voiceId, gender, sampleText, personaKey = 'marcus') => {
     try {
       const res = await getGeminiTTSAudio(
         sampleText || "Hey there, ready to sharpen your pitch?",
         voiceId,
-        gender
+        gender,
+        personaKey
       );
       if (res && res.audioBase64) {
         const audio = new Audio(`data:${res.mimeType || 'audio/wav'};base64,${res.audioBase64}`);
         audio.play().catch(() => {});
+        showToast(`Playing ${res.voiceUsed || voiceId}`);
+      } else {
+        showToast('Voice preview unavailable right now');
       }
     } catch (err) {
       console.warn('Voice preview error:', err);
@@ -176,9 +190,14 @@ export default function SettingsPage() {
   };
 
   const handleSaveEnvKeys = () => {
-    if (envKeys.geminiApiKey) setGeminiApiKey(envKeys.geminiApiKey);
-    if (envKeys.deepgramApiKey) setDeepgramApiKey(envKeys.deepgramApiKey);
-    showToast('API credentials saved!');
+    if (envKeys.deepgramApiKey !== undefined) setDeepgramApiKey(envKeys.deepgramApiKey);
+    // Clear any stale external Gemini key override if emptied so server-managed key takes over cleanly
+    if (!envKeys.geminiApiKey) {
+      localStorage.removeItem('gemini_api_key');
+    } else {
+      setGeminiApiKey(envKeys.geminiApiKey);
+    }
+    showToast('Integration settings saved!');
   };
 
   const handleOpenNewProspect = () => {
@@ -215,7 +234,7 @@ export default function SettingsPage() {
 
   const handleSaveProspectForm = () => {
     if (!editingProspectData.name) {
-      alert('Please enter a prospect name.');
+      showToast('Please enter a prospect name.');
       return;
     }
     saveProspect(editingProspectData);
@@ -603,7 +622,7 @@ export default function SettingsPage() {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleTestVoice(v.id, v.gender, "Hey there, ready to sharpen your pitch?");
+                            handleTestVoice(v.id, v.gender, "Hey there, ready to sharpen your pitch and nail your architecture story?", v.personaKey);
                           }}
                           className="px-2.5 py-1 bg-white hover:bg-slate-100 text-[11px] font-semibold text-slate-700 rounded-full transition flex items-center gap-1 shadow-xs border border-slate-200/70"
                         >
@@ -616,16 +635,24 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            {/* Prospect Voice */}
+            {/* Prospect & Agent Voice */}
             <div className="soft-card p-6 space-y-4">
               <div>
-                <h3 className="text-sm font-semibold text-slate-900 tracking-tight">Prospect Voice (Hank / Sarah / Dave)</h3>
-                <p className="text-xs text-slate-400 mt-0.5">Simulated voice of the buyer answering your cold call</p>
+                <h3 className="text-sm font-semibold text-slate-900 tracking-tight">Prospect &amp; Agent Voices (Charlie / Joey / Katy / Contractors)</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Distinct Gemini 3.8 and Deepgram Aura voices for every persona</p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {PROSPECT_VOICES.map((v) => {
                   const isSelected = voiceSettings.prospectVoice === v.id;
+                  const sampleLine =
+                    v.personaKey === 'charlie'
+                      ? "All right, Charlie here. Walk me through one real system you put into production."
+                      : v.personaKey === 'joey'
+                      ? "Hey, Joey here. Skip the buzzwords and show me how KRECHET Academy actually works."
+                      : v.personaKey === 'katy'
+                      ? "Hey, Katy here. Pull up your screen share and walk me through your simulation."
+                      : "Make it quick, I'm out on a job site right now.";
                   return (
                     <div
                       key={v.id}
@@ -650,7 +677,7 @@ export default function SettingsPage() {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleTestVoice(v.id, v.gender, "Hank here, make it quick. I'm on a job site.");
+                            handleTestVoice(v.id, v.gender, sampleLine, v.personaKey);
                           }}
                           className="px-2.5 py-1 bg-white hover:bg-slate-100 text-[11px] font-semibold text-slate-700 rounded-full transition flex items-center gap-1 shadow-xs border border-slate-200/70"
                         >
@@ -665,27 +692,35 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* Tab 4: Environment Keys */}
+        {/* Tab 4: Voice & Cloud Integrations */}
         {activeTab === 'env' && (
-          <div className="soft-card p-6 sm:p-7 space-y-4 animate-fadeIn">
+          <div className="soft-card p-6 sm:p-7 space-y-5 animate-fadeIn">
             <div>
-              <h3 className="text-sm font-semibold text-slate-900 tracking-tight">API Keys & Environment Variables</h3>
-              <p className="text-xs text-slate-400 mt-0.5">Stored securely in your local browser sandbox</p>
+              <h3 className="text-sm font-semibold text-slate-900 tracking-tight">Cloud &amp; Voice Integrations</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Gemini 3.8 Live &amp; TTS run automatically via your server environment. Optional Deepgram Aura &amp; Supabase sync status are shown below.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80">
+                <div className="text-xs font-semibold text-slate-900">Gemini 3.8 Live &amp; TTS Engine</div>
+                <p className="text-[11px] text-emerald-600 font-medium mt-1">
+                  ✓ Server-side key active (Settings &gt; Secrets)
+                </p>
+              </div>
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80">
+                <div className="text-xs font-semibold text-slate-900">Supabase Cloud Sync</div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  {isSupabaseLiveConfigured()
+                    ? '✓ Connected (dossiers, weak areas & agents syncing)'
+                    : 'Local storage active · SQL schema ready in supabase/full_schema.sql'}
+                </p>
+              </div>
             </div>
 
             <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">Gemini API Key</label>
-              <input
-                type="password"
-                value={envKeys.geminiApiKey}
-                onChange={(e) => setEnvKeys({ ...envKeys, geminiApiKey: e.target.value })}
-                placeholder="AIzaSy... (leave blank to use server environment key)"
-                className="w-full bg-slate-50 border border-slate-200/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-400 font-mono"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">Deepgram API Key</label>
+              <label className="block text-[11px] font-semibold text-slate-500 mb-1">Optional Deepgram Aura Key (for aura-* voices)</label>
               <input
                 type="password"
                 value={envKeys.deepgramApiKey}
@@ -701,7 +736,7 @@ export default function SettingsPage() {
                 className="px-5 py-2 rounded-full bg-gradient-to-r from-[#6366f1] to-[#4f46e5] text-white text-xs font-semibold transition shadow-[0_4px_14px_rgba(99,102,241,0.25)] flex items-center gap-1.5 cursor-pointer"
               >
                 <Save className="w-3.5 h-3.5" />
-                <span>Save API Keys</span>
+                <span>Save Integration Settings</span>
               </button>
             </div>
           </div>

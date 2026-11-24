@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { GoogleGenAI } from '@google/genai';
 import { getGeminiApiKey, askGeminiCoach, getGeminiTTSAudio, researchProspectWithGemini } from '../lib/geminiClient';
+import { resolveCoachVoice, resolveProspectVoice } from '../lib/voiceResolver';
 import { GeminiLiveSession } from '../lib/geminiLiveClient';
 import { saveScriptToScriptsPage, getActiveScript, pullUpScript, openPracticeSession } from '../lib/coachActions';
 import { playPickupClick, playHangupClick } from '../lib/soundUtils';
@@ -459,7 +460,7 @@ export default function WorkshopLessonStudio({
         : `Coach Marcus, please start the classroom drill now. Greet me aloud and state Scenario 1: "${activeScenario.title}" with contractor pushback: "${activeScenario.contractorLine}".`;
 
       const session = new GeminiLiveSession({
-        voiceName: 'Fenrir',
+        voiceName: workshopMode === 'simulation' ? resolveProspectVoice('dave').liveVoice : resolveCoachVoice('marcus').liveVoice,
         initialPrompt: modeInitialPrompt,
         systemInstruction: modeInstruction,
         onStateChange: (newState) => {
@@ -532,7 +533,8 @@ export default function WorkshopLessonStudio({
     if (!text || isAgentMuted) return;
     try {
       const clean = text.replace(/[*_#`~>]/g, '').trim();
-      const tts = await getGeminiTTSAudio(clean, 'Fenrir', 'male', 'marcus');
+      const resolved = resolveCoachVoice('marcus');
+      const tts = await getGeminiTTSAudio(clean, resolved.ttsVoice, resolved.gender, resolved.personaKey);
       if (tts && tts.audioBase64) {
         const audio = new Audio(`data:${tts.mimeType || 'audio/wav'};base64,${tts.audioBase64}`);
         audio.play().catch(() => {});
