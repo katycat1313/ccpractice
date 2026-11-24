@@ -19,6 +19,7 @@ import ProgressPage from './pages/ProgressPage';
 import RebuttalsPage from './pages/RebuttalsPage';
 import RecordingsPage from './pages/RecordingsPage';
 import WorkshopsPage from './pages/WorkshopsPage';
+import VideoInterviewStudioPage from './pages/VideoInterviewStudioPage';
 
 const getInitialSession = () => {
   if (typeof window === 'undefined') return null;
@@ -155,6 +156,8 @@ export default function App() {
           <Route path={ROUTES.DASHBOARD} element={<DashboardPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
           <Route path="/overview" element={<DashboardPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
           <Route path={ROUTES.PRACTICE} element={<PracticePage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
+          <Route path={ROUTES.VIDEO_INTERVIEW} element={<VideoInterviewStudioPage />} />
+          <Route path="/interview-studio" element={<VideoInterviewStudioPage />} />
           <Route path={ROUTES.COACH} element={<CoachPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
           <Route path={ROUTES.SCRIPT_BUILDER} element={<ScriptBuilderPage script={script} setScript={setScript} setPracticeSettings={setPracticeSettings} />} />
           <Route path="/scripts" element={<SavedScriptsPage setScript={setScript} setPracticeSettings={setPracticeSettings} />} />

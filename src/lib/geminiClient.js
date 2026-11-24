@@ -1,4 +1,6 @@
 import { getDeepgramApiKey, getDeepgramProjectId, getPreferredVoice } from './deepgramService';
+import { getCareerDossier } from './careerDossier';
+import { getAdaptiveLearningState } from './adaptiveLearning';
 
 /**
  * Retrieve user's configured Gemini API Key from localStorage or user profile
@@ -64,9 +66,17 @@ export async function askGeminiCoach({
         messages,
         userMessage,
         currentBusiness,
-        stage,
+        stage: stage || 'open_coach',
         mode,
         userMemory,
+        careerDossier: getCareerDossier(),
+        adaptiveProfile: {
+          weakAreas: (getAdaptiveLearningState().weakAreas || []).map((w) => ({
+            skill: w.label,
+            score: w.score,
+            note: w.note,
+          })),
+        },
         geminiApiKey,
         deepgramApiKey
       })

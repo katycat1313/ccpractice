@@ -11,7 +11,8 @@ import {
   Eye,
   BookmarkCheck,
   Zap,
-  ChevronRight
+  ChevronRight,
+  Video
 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { getCoachMemory } from '../lib/coachMemory';
@@ -100,22 +101,22 @@ export default function DashboardPage({ setScript }) {
     navigate('/workshops');
   };
 
-  // Safe portrait resolver
+  // Safe local portrait resolver
   const getSafeAvatarUrl = (p) => {
     const isCarl = p.name?.includes('Carl') || p.name?.includes('Mac') || p.id?.includes('carl');
     const isBo = p.name?.includes('Bo') || p.name?.includes('Travis') || p.id?.includes('bo');
     const isDelbert = p.name?.includes('Delbert') || p.id?.includes('delbert');
 
-    if (isCarl || p.avatarUrl?.includes('1544717305-2782549b5136')) {
-      return 'https://images.unsplash.com/photo-1552058544-f2b08422138a?auto=format&fit=crop&w=800&q=80';
+    if (isCarl) {
+      return '/src/assets/images/prospect_hank_v2_1790644403578.jpg';
     }
     if (isBo) {
-      return 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=800&q=80';
+      return '/src/assets/images/prospect_mike_1790629428393.jpg';
     }
     if (isDelbert) {
-      return 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=800&q=80';
+      return '/src/assets/images/coach_marcus_1790629406216.jpg';
     }
-    return p.avatarUrl || p.portraitUrl || 'https://images.unsplash.com/photo-1552058544-f2b08422138a?auto=format&fit=crop&w=800&q=80';
+    return p.avatarUrl || p.portraitUrl || '/src/assets/images/prospect_hank_v2_1790644403578.jpg';
   };
 
   return (
@@ -164,6 +165,33 @@ export default function DashboardPage({ setScript }) {
               LEFT COLUMN: COMMAND DOCK
              ========================================================================= */}
           <div className="lg:col-span-5 space-y-6">
+
+            {/* Live Agent Video Interview & KRECHET Screen-Share Studio Launcher */}
+            <div className="p-6 rounded-2xl bg-[#0d121c] border border-indigo-500/40 shadow-xl space-y-4">
+              <div className="flex items-center justify-between text-xs text-indigo-300 font-medium">
+                <span>Live Agent Video Studio</span>
+                <span className="text-slate-400">Charlie · Joey · Katy</span>
+              </div>
+
+              <div>
+                <h3 className="text-base font-bold text-white">
+                  Live Video Interview &amp; KRECHET Screen Share
+                </h3>
+                <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                  Project-based AI engineering interviews and live KRECHET Academy screen-share pitches with your Ultra-Realistic Charlie, Joey, and Katy avatars.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => navigate('/video-interview')}
+                className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Video className="w-4 h-4" />
+                <span>Open Video Interview Studio</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
 
             {/* Compact Practice Call Studio Launcher */}
             <div className="p-6 rounded-2xl bg-[#0d121c] border border-slate-800/80 shadow-xl space-y-4">

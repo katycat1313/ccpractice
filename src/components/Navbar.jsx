@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Settings, LogOut, PhoneCall, FileText, Mic, User, ExternalLink, Sparkles, LayoutDashboard } from 'lucide-react';
+import { Settings, LogOut, PhoneCall, FileText, Mic, Video, ExternalLink, LayoutDashboard } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import IframeMicModal from './IframeMicModal';
@@ -46,16 +46,22 @@ export default function Navbar() {
       active: currentPath === '/' || currentPath === '/dashboard' || currentPath === '/overview'
     },
     {
-      to: '/script-builder',
-      label: 'Script Builder',
-      icon: FileText,
-      active: currentPath === '/script-builder' || currentPath === '/scripts'
+      to: '/video-interview',
+      label: 'Video Interview',
+      icon: Video,
+      active: currentPath === '/video-interview' || currentPath === '/interview-studio'
     },
     {
       to: '/practice',
       label: 'Practice Studio',
       icon: PhoneCall,
       active: currentPath === '/coach' || currentPath === '/practice'
+    },
+    {
+      to: '/script-builder',
+      label: 'Script Builder',
+      icon: FileText,
+      active: currentPath === '/script-builder' || currentPath === '/scripts'
     },
     {
       to: '/recordings',
@@ -117,8 +123,8 @@ export default function Navbar() {
             className="px-3 py-1.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 hover:from-indigo-500 hover:to-purple-500 text-white border border-indigo-400/40 rounded-xl transition flex items-center gap-1.5 text-xs font-bold shadow-md shadow-indigo-600/30 cursor-pointer group active:scale-95"
             title={isInIframe ? "Click to open full window & enable microphone" : "Open Coach microphone"}
           >
-            <Mic className="w-3.5 h-3.5 text-white animate-pulse" />
-            <span className="font-semibold">Mic</span>
+            <Mic className="w-3.5 h-3.5 text-white" />
+            <span className="font-semibold">Coach Mic</span>
             {isInIframe && (
               <span className="px-1.5 py-0.5 bg-amber-400 text-slate-950 text-[10px] rounded font-black tracking-wide">
                 iFrame

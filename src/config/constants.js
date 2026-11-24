@@ -57,6 +57,7 @@ export const ROUTES = {
   DASHBOARD: '/dashboard',
   SCRIPT_BUILDER: '/script-builder',
   PRACTICE: '/practice',
+  VIDEO_INTERVIEW: '/video-interview',
   FEEDBACK: '/feedback',
   SAVED_SCRIPTS: '/saved-scripts',
   COACH: '/coach',
