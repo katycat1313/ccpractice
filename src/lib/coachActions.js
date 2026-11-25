@@ -61,6 +61,48 @@ export const BUILTIN_TEMPLATES = [
       { objection: "I don't buy anything from cold callers, send me paperwork in the mail", response: "Fair enough, Delbert. I won't waste your paper. If I send a 2-page spec sheet to your Elkview office, will you take 3 minutes to look at the numbers with me next week?" }
     ],
     closingAsk: "Are you free for 5 minutes Thursday afternoon when you shut down the machines, or is Friday morning better?"
+  },
+  {
+    id: 'tpl-krechet-seats',
+    category: 'krechet',
+    title: 'KRECHET Academy — 10 & 20-Seat Agency Pitch',
+    name: 'KRECHET Academy — 10 & 20-Seat Agency Pitch',
+    target: 'Performance Marketing Agency Owner / VP of Paid Media',
+    hook: "Hey [Name], Katy with KRECHET Academy. I know you're between client reviews, so give me 20 seconds: most agencies we talk to bought video courses last year that nobody finished while junior media buyers still burn client ROAS. If I can show you how 10 or 20 seats of live, hands-on marketing simulations fix that without pulling senior leads off billable hours, worth 3 minutes?",
+    deliveryNotes: 'Slow down on "nobody finished" and "burn client ROAS." Pause 1 full second after "worth 3 minutes?" and let them talk.',
+    problem: "Junior media buyers and account strategists burn client ad spend learning attribution, pacing, and funnel diagnostics on live accounts—and senior leads lose 6–8 billable hours a week shadowing them because static video courses sit at <20% completion.",
+    value: "KRECHET Academy puts your team inside realistic digital marketing simulations and interactive workshops with manager scorecards. Start with a 10-Seat Team Package for your core pod or roll out the 20-Seat Scale Package across multi-pod teams—one saved client retainer pays for the entire year.",
+    painValue: {
+      problem: "Junior media buyers and account strategists burn client ad spend learning attribution, pacing, and funnel diagnostics on live accounts—and senior leads lose 6–8 billable hours a week shadowing them because static video courses sit at <20% completion.",
+      value: "KRECHET Academy puts your team inside realistic digital marketing simulations and interactive workshops with manager scorecards. Start with a 10-Seat Team Package for your core pod or roll out the 20-Seat Scale Package across multi-pod teams—one saved client retainer pays for the entire year."
+    },
+    rebuttals: [
+      { objection: "We bought marketing courses before and nobody finished them", response: "That's exactly why we don't sell passive video libraries. KRECHET is interactive simulation—buyers have to diagnose broken ROAS, reallocate budget, and defend strategy in 15-minute sprints, and you see completion and skill gaps on a manager dashboard." },
+      { objection: "My team is slammed on client deliverables, they don't have time for training", response: "Each simulation takes 15 minutes—less time than fixing one blown ad pacing error. Compare 15 minutes a week against losing a $5k/mo client retainer because a junior buyer missed a conversion tracking drop." },
+      { objection: "Can we just start with 2 or 3 seats instead of 10 or 20?", response: "When only 2 people train, pods stay inconsistent and senior leads still play referee. Our 10-Seat package standardizes an entire pod with shared benchmarks—and if you have 20+ across pods, the 20-Seat tier cuts your per-seat cost significantly." }
+    ],
+    closingAsk: "Let's walk through one live KRECHET simulation together for 10 minutes—does launching a 10-seat pod pilot or a 20-seat agency rollout fit your headcount better?"
+  },
+  {
+    id: 'tpl-krechet-whitelabel',
+    category: 'krechet',
+    title: 'KRECHET Academy — Premium White-Label License',
+    name: 'KRECHET Academy — Premium White-Label License',
+    target: 'Agency Founder / Marketing Consultancy Partner',
+    hook: "Hey [Name], Katy from KRECHET Academy. Quick question for you: what if your agency could onboard new hires AND upsell enterprise clients into your own branded digital marketing simulation academy—without spending 12 months building curriculum from scratch? Give me 20 seconds to explain how our white-label license works?",
+    deliveryNotes: 'Deliver like a peer talking to a founder. Emphasize "your own branded academy" and "upsell enterprise clients."',
+    problem: "Agencies struggle to differentiate in RFPs and retain high-margin retainers because every agency pitches the same slide deck—while building proprietary training and client enablement tools in-house costs $100k+ and takes a year.",
+    value: "KRECHET Academy Premium White-Label gives you a fully agency-branded portal, custom client scenarios, and live interactive simulations you can run internally for your team AND license directly to your clients as a high-margin value-add or standalone revenue stream.",
+    painValue: {
+      problem: "Agencies struggle to differentiate in RFPs and retain high-margin retainers because every agency pitches the same slide deck—while building proprietary training and client enablement tools in-house costs $100k+ and takes a year.",
+      value: "KRECHET Academy Premium White-Label gives you a fully agency-branded portal, custom client scenarios, and live interactive simulations you can run internally for your team AND license directly to your clients as a high-margin value-add or standalone revenue stream."
+    },
+    rebuttals: [
+      { objection: "We're an agency, not a training company—why would we white-label an academy?", response: "You're already training clients informally on every QBR call. White-labeling KRECHET turns that unpaid education into sticky IP under your logo that locks in retainers and closes bigger enterprise pitches." },
+      { objection: "How much engineering or content work does our team have to do?", response: "Zero engineering. We deploy your domain, branding, and core marketing simulation library out of the box—and then tailor custom playbooks around your agency's signature framework." },
+      { objection: "Send me pricing and a deck first", response: "Happy to send the breakdown right after this—so I send the right white-label tier, would you use it primarily for internal team ramp-up or client-facing training too?" }
+    ],
+    closingAsk: "Let's put 15 minutes on the calendar to preview a branded white-label portal with your agency's logo—would Thursday at 11 AM or Friday at 2 PM work better?"
   }
 ];
 

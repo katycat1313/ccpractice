@@ -22,7 +22,10 @@ import {
   Zap,
   Shield,
   HelpCircle,
-  CheckCircle2
+  CheckCircle2,
+  Headphones,
+  Volume2,
+  Hand,
 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import PracticeTeleprompter from '../components/PracticeTeleprompter';
@@ -119,7 +122,13 @@ export default function PracticePage({ setScript: setGlobalScript }) {
   const [activeScriptPart, setActiveScriptPart] = useState('hook');
   const [liveSessionState, setLiveSessionState] = useState('disconnected');
   const [isMuted, setIsMuted] = useState(false);
+  const [isMicGranted, setIsMicGranted] = useState(false);
   const [isIframeMicModalOpen, setIsIframeMicModalOpen] = useState(false);
+  const [bargeInMode, setBargeInMode] = useState('headphones'); // 'headphones' | 'speakers'
+  const [bargeInCount, setBargeInCount] = useState(0);
+  const [bargeInFlash, setBargeInFlash] = useState(false);
+  const [audioAmplitude, setAudioAmplitude] = useState({ input: 0, output: 0 });
+  const [isScriptExpanded, setIsScriptExpanded] = useState(false);
 
   // Post-Call Candid Feedback State
   const [postCallFeedback, setPostCallFeedback] = useState(null);
@@ -131,15 +140,22 @@ export default function PracticePage({ setScript: setGlobalScript }) {
   const speechStartedAtRef = useRef(null);
   const pitchBaselineRef = useRef([]);
 
-  // Speech Accounting References
+  // Speech Accounting & Audio References
   const timerRef = useRef(null);
   const liveSessionRef = useRef(null);
-  const speechRecognitionRef = useRef(null);
+  const prewarmedMicStreamRef = useRef(null);
+  const transcriptEndRef = useRef(null);
+  const transcriptTurnsRef = useRef([]);
   const userSpeechChunkCountRef = useRef(0);
   const userSpeechTokensCountRef = useRef(0);
   const userSpeechTextRef = useRef('');
 
-  const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
+  useEffect(() => {
+    transcriptTurnsRef.current = transcriptTurns;
+    if (transcriptEndRef.current) {
+      transcriptEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [transcriptTurns, liveSpeechText]);
 
   // Listen for script updates from ScriptBuilder or other tabs
   useEffect(() => {
@@ -189,18 +205,68 @@ export default function PracticePage({ setScript: setGlobalScript }) {
     };
   }, [isCallActive]);
 
-  // Clean up live session and speech recognition on unmount
+  // Clean up live session and prewarmed mic stream on unmount
   useEffect(() => {
     return () => {
       if (liveSessionRef.current) {
         liveSessionRef.current.stop();
         liveSessionRef.current = null;
       }
-      if (speechRecognitionRef.current) {
-        try { speechRecognitionRef.current.stop(); } catch { /* ignore */ }
+      if (prewarmedMicStreamRef.current) {
+        try {
+          prewarmedMicStreamRef.current.getTracks().forEach((t) => t.stop());
+        } catch {
+          /* ignore */
+        }
+        prewarmedMicStreamRef.current = null;
       }
     };
   }, []);
+
+  const handleToggleMicPermission = async () => {
+    if (isCallActive && liveSessionRef.current) {
+      if (!liveSessionRef.current.hasActiveMic()) {
+        const ok = await liveSessionRef.current.enableMicrophone();
+        setIsMicGranted(ok);
+        setIsMuted(!ok);
+        return;
+      }
+      const nextMuted = !isMuted;
+      setIsMuted(nextMuted);
+      liveSessionRef.current.setMuted(nextMuted);
+      return;
+    }
+
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setIsIframeMicModalOpen(true);
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      prewarmedMicStreamRef.current = stream;
+      setIsMicGranted(true);
+      setIsMuted(false);
+    } catch {
+      setIsMicGranted(false);
+      setIsIframeMicModalOpen(true);
+    }
+  };
+
+  const handleChangeBargeInMode = (mode) => {
+    const normalized = mode === 'speakers' ? 'speakers' : 'headphones';
+    setBargeInMode(normalized);
+    if (liveSessionRef.current) {
+      liveSessionRef.current.setBargeInMode(normalized);
+    }
+  };
+
+  const handleManualInterrupt = () => {
+    if (liveSessionRef.current) {
+      liveSessionRef.current.interruptAI('manual');
+    }
+  };
 
   // Handle Persona Switching without overwriting active script in localStorage
   const handleSelectPersona = (prospect) => {
@@ -244,17 +310,20 @@ ${(prospect.commonObjections || []).map((o, idx) => `   - Objection #${idx + 1}:
     setPostCallFeedback(null);
     setTranscriptTurns([]);
     setLiveSpeechText('');
+    setBargeInCount(0);
+    setBargeInFlash(false);
     setLiveSpeechMetrics({ wpm: 0, pace: 'steady', pitch: 'neutral', pitchLabel: 'Measuring', toneLabel: 'Keep it conversational' });
     speechStartedAtRef.current = null;
     pitchBaselineRef.current = [];
     setCallDuration(0);
     setActiveScriptPart('hook');
+    setActiveObjectionIndex(null);
     userSpeechChunkCountRef.current = 0;
     userSpeechTokensCountRef.current = 0;
     userSpeechTextRef.current = '';
 
     // 2. Play authentic telephone ring sound
-    await playTelephoneRing(1.8);
+    await playTelephoneRing(1.4);
 
     // 3. Play pickup click
     playPickupClick();
@@ -264,67 +333,74 @@ ${(prospect.commonObjections || []).map((o, idx) => `   - Objection #${idx + 1}:
     const isClassroom = studioMode === 'classroom';
     const contractorPrompt = buildContractorPersonaPrompt(activeProspect);
     const systemInstruction = isClassroom ? MARCUS_CLASSROOM_INSTRUCTOR_PROMPT : contractorPrompt;
-    const scriptContext = `\n\nACTIVE TELEPROMPTER SCRIPT (authoritative):\nHook: ${currentScript.hook}\nProblem: ${currentScript.problem || currentScript.painValue?.problem || ''}\nValue: ${currentScript.value || currentScript.painValue?.value || ''}\nClosing ask: ${currentScript.closingAsk || ''}\nDelivery cues: ${currentScript.deliveryNotes || 'Use a calm pace, pause after the hook, and drop your tone at the end of statements.'}\nUse these exact lines when coaching the student. Do not substitute a different generic opener while this script is displayed.`;
+    const scriptContext = `\n\nACTIVE TELEPROMPTER SCRIPT (authoritative):\nTitle: ${currentScript.title || 'Active Pitch'}\nHook: ${currentScript.hook}\nProblem: ${currentScript.problem || currentScript.painValue?.problem || ''}\nValue: ${currentScript.value || currentScript.painValue?.value || ''}\nClosing ask: ${currentScript.closingAsk || ''}\nDelivery cues: ${currentScript.deliveryNotes || 'Use a calm pace, pause after the hook, and drop your tone at the end of statements.'}\nKeep replies concise (1 to 3 short spoken sentences) so the rep can interrupt naturally at any moment.`;
     const voiceId = isClassroom ? resolveCoachVoice('marcus').liveVoice : resolveProspectVoice(activeProspect).liveVoice;
     const remoteSpeakerName = isClassroom ? 'Coach Marcus' : activeProspect.name;
 
     const initialGreeting = typeof initialDrillPrompt === 'string' && initialDrillPrompt.trim()
       ? initialDrillPrompt
       : (isClassroom
-        ? `Coach Marcus, I just connected to the live masterclass studio. Introduce yourself as my instructor, ask what contractor persona or opener I want to drill today (e.g. ${activeProspect.name}), and immediately start with our baseline 10-second pattern interrupt drill.`
-        : undefined);
+        ? `Coach Marcus, I just connected to the live masterclass studio. Introduce yourself briefly in 2 sentences and invite me to read the opening hook on my teleprompter for ${activeProspect.name}.`
+        : `The phone just connected. Answer naturally in character as ${activeProspect.name} in 1 short sentence (e.g. "${activeProspect.greeting || `Yeah, ${activeProspect.name.split(' ')[0]} speaking. Who is this?`}") and wait for my pitch.`);
 
-    // Start browser speech recognition to capture exact words simultaneously
-    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRec) {
-      try {
-        const recognition = new SpeechRec();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'en-US';
-        recognition.onresult = (e) => {
-          // Continuous recognition retains prior final results. Render only
-          // the current segment so each speaking turn starts clean.
-          const clean = e.results[e.results.length - 1]?.[0]?.transcript?.trim() || '';
-          const words = clean.split(/\s+/).filter(Boolean);
-          setLiveSpeechText(clean);
-          if (clean && !speechStartedAtRef.current) speechStartedAtRef.current = performance.now();
-          const elapsedMinutes = speechStartedAtRef.current ? Math.max((performance.now() - speechStartedAtRef.current) / 60000, 1 / 60) : 0;
-          const wpm = Math.round(words.length / Math.max(elapsedMinutes, 1 / 60));
-          setLiveSpeechMetrics(prev => ({
-            ...prev,
-            wpm,
-            pace: wpm > 175 ? 'rushed' : wpm > 0 && wpm < 105 ? 'slow' : 'steady',
-            toneLabel: wpm > 175 ? 'Slow down; add a pause' : wpm < 105 && wpm > 0 ? 'Add forward energy' : 'Conversational pace'
-          }));
-          userSpeechTextRef.current = clean;
-          userSpeechTokensCountRef.current = words.length;
-
-          // Track turn
-          setTranscriptTurns(prev => {
-            const last = prev[prev.length - 1];
-            if (last && last.speaker === 'You') {
-              const next = [...prev];
-              next[next.length - 1] = { ...last, text: clean };
-              return next;
-            }
-            return [...prev, { speaker: 'You', text: clean, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }];
-          });
-        };
-        recognition.onerror = () => {};
-        recognition.start();
-        speechRecognitionRef.current = recognition;
-      } catch {
-        /* ignore */
-      }
-    }
+    const existingMicStream =
+      prewarmedMicStreamRef.current &&
+      prewarmedMicStreamRef.current.getAudioTracks?.().some((t) => t.readyState === 'live')
+        ? prewarmedMicStreamRef.current
+        : null;
 
     const session = geminiLiveClient.connect(activeProspect, currentScript, {
       voiceName: voiceId,
       systemInstruction: `${systemInstruction}${scriptContext}`,
       initialPrompt: initialGreeting,
+      micStream: existingMicStream,
+      bargeInMode,
       enableSearch: true,
       onStateChange: (st) => setLiveSessionState(st),
+      onMicStatusChange: (ready) => {
+        setIsMicGranted(ready);
+        if (ready) setIsMuted(false);
+      },
+      onAudioAmplitude: (amp) => {
+        setAudioAmplitude({ input: amp.input || 0, output: amp.output || 0 });
+      },
+      onInputTranscript: (delta, fullUserText) => {
+        const clean = (fullUserText || delta || '').trim();
+        if (!clean) return;
+        const words = clean.split(/\s+/).filter(Boolean);
+        setLiveSpeechText(clean);
+        if (!speechStartedAtRef.current) speechStartedAtRef.current = performance.now();
+        const elapsedMinutes = Math.max((performance.now() - speechStartedAtRef.current) / 60000, 1 / 60);
+        const wpm = Math.min(260, Math.round(words.length / elapsedMinutes));
+        setLiveSpeechMetrics((prev) => ({
+          ...prev,
+          wpm,
+          pace: wpm > 175 ? 'rushed' : wpm > 0 && wpm < 105 ? 'slow' : 'steady',
+          toneLabel: wpm > 175 ? 'Slow down; add a pause' : wpm < 105 && wpm > 0 ? 'Add forward energy' : 'Conversational pace',
+        }));
+
+        userSpeechTextRef.current = userSpeechTextRef.current
+          ? `${userSpeechTextRef.current} ${delta || ''}`.trim()
+          : clean;
+        userSpeechTokensCountRef.current += (delta || clean).trim().split(/\s+/).filter(Boolean).length;
+
+        setTranscriptTurns((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.speaker === 'You') {
+            const next = [...prev];
+            next[next.length - 1] = { ...last, text: clean };
+            return next;
+          }
+          return [
+            ...prev,
+            {
+              speaker: 'You',
+              text: clean,
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            },
+          ];
+        });
+      },
       onUserSpeechChunk: ({ chunkCount, pitchHz, confidence }) => {
         userSpeechChunkCountRef.current = chunkCount;
         if (pitchHz > 0 && confidence >= 0.65) {
@@ -332,42 +408,59 @@ ${(prospect.commonObjections || []).map((o, idx) => `   - Objection #${idx + 1}:
           if (samples.length < 20) samples.push(pitchHz);
           const baseline = samples.length ? samples.reduce((sum, value) => sum + value, 0) / samples.length : pitchHz;
           const pitch = pitchHz > baseline * 1.22 ? 'high' : pitchHz < baseline * 0.82 ? 'grounded' : 'neutral';
-          setLiveSpeechMetrics(prev => ({
+          setLiveSpeechMetrics((prev) => ({
             ...prev,
             pitch,
-            pitchLabel: `${Math.round(pitchHz)} Hz • ${pitch === 'high' ? 'rising/high' : pitch === 'grounded' ? 'grounded' : 'near your baseline'}`
+            pitchLabel: `${Math.round(pitchHz)} Hz • ${pitch === 'high' ? 'rising/high' : pitch === 'grounded' ? 'grounded' : 'near your baseline'}`,
           }));
         }
       },
       onTextToken: (_token, fullText) => {
-        if (/busy|email|already have|not interested|send/i.test(fullText || '')) setActiveScriptPart('rebuttal');
-        else if (fullText) setActiveScriptPart('problem');
-        setTranscriptTurns(prev => {
+        if (/busy|email|already have|not interested|send|course|budget|seats|price/i.test(fullText || '')) {
+          setActiveScriptPart('rebuttal');
+        } else if (fullText) {
+          setActiveScriptPart('problem');
+        }
+        setTranscriptTurns((prev) => {
           const last = prev[prev.length - 1];
           if (last && last.speaker === remoteSpeakerName) {
             const next = [...prev];
             next[next.length - 1] = { ...last, text: fullText };
             return next;
           }
-          return [...prev, { speaker: remoteSpeakerName, text: fullText, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }];
+          return [
+            ...prev,
+            {
+              speaker: remoteSpeakerName,
+              text: fullText,
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            },
+          ];
         });
       },
       onTurnComplete: () => {
         setLiveSpeechText('');
         speechStartedAtRef.current = null;
-        const lastTurn = transcriptTurns[transcriptTurns.length - 1]?.text?.toLowerCase() || '';
-        const matchingRebIdx = (currentScript.rebuttals || []).findIndex(r => 
-          lastTurn.includes('cell') || lastTurn.includes('service') || lastTurn.includes('paper') || lastTurn.includes('email') || lastTurn.includes('connie')
-        );
+        const latestTurns = transcriptTurnsRef.current;
+        const lastTurn = latestTurns[latestTurns.length - 1]?.text?.toLowerCase() || '';
+        const matchingRebIdx = (currentScript.rebuttals || []).findIndex((r) => {
+          const keywords = (r.objection || '')
+            .toLowerCase()
+            .split(/\W+/)
+            .filter((w) => w.length > 4);
+          return keywords.some((kw) => lastTurn.includes(kw));
+        });
         if (matchingRebIdx >= 0) {
           setActiveObjectionIndex(matchingRebIdx);
         }
       },
-      onInterrupted: () => {
-        // Barge-in detected
+      onInterrupted: ({ count }) => {
+        setBargeInCount((prev) => count || prev + 1);
+        setBargeInFlash(true);
+        setTimeout(() => setBargeInFlash(false), 1800);
       },
       onIframeMicBlocked: () => setIsIframeMicModalOpen(true),
-      onError: (err) => console.warn('Practice live session error:', err)
+      onError: (err) => console.warn('Practice live session error:', err),
     });
 
     liveSessionRef.current = session;
@@ -395,16 +488,13 @@ ${(prospect.commonObjections || []).map((o, idx) => `   - Objection #${idx + 1}:
     playHangupClick();
     setIsCallActive(false);
     setIsDialing(false);
-
-    if (speechRecognitionRef.current) {
-      try { speechRecognitionRef.current.stop(); } catch { /* ignore */ }
-      speechRecognitionRef.current = null;
-    }
+    setAudioAmplitude({ input: 0, output: 0 });
 
     if (liveSessionRef.current) {
       liveSessionRef.current.stop();
       liveSessionRef.current = null;
     }
+    prewarmedMicStreamRef.current = null;
 
     const totalSeconds = callDuration;
 
@@ -608,8 +698,15 @@ CRITICAL RULES:
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={() => setIsCoachPanelOpen(true)}
-              className="px-3 py-1.5 rounded-xl bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold transition hover:bg-emerald-600/30"
+              onClick={() => {
+                if (isCallActive && liveSessionRef.current) {
+                  liveSessionRef.current.stop();
+                  liveSessionRef.current = null;
+                  setIsCallActive(false);
+                }
+                window.dispatchEvent(new Event('scriptmaster_open_coach'));
+              }}
+              className="px-3 py-1.5 rounded-xl bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold transition hover:bg-emerald-600/30 cursor-pointer"
             >
               Open Coach
             </button>
@@ -741,13 +838,13 @@ CRITICAL RULES:
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           
           {/* =========================================================================
-              LEFT COLUMN: CALL DIALER & GEMINI LIVE HUD (7 cols)
+              LEFT COLUMN: BIDIRECTIONAL LIVE VOICE CONSOLE & CONTROLS
              ========================================================================= */}
-          <div className="lg:col-span-7 flex flex-col gap-6">
+          <div className={`${isScriptExpanded ? 'lg:col-span-4' : 'lg:col-span-6'} flex flex-col gap-5 transition-all`}>
 
             {/* Target Banner: Coach Marcus (Classroom) or Contractor Persona */}
             <div className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 shadow-xl flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0">
                 <div className="w-12 h-12 rounded-2xl overflow-hidden border border-slate-700 shrink-0 bg-slate-950">
                   <img
                     src={
@@ -759,46 +856,184 @@ CRITICAL RULES:
                     className="w-full h-full object-cover"
                   />
                 </div>
-                <div>
-                  <h3 className="text-sm font-black text-white flex items-center gap-2">
-                    <span>{studioMode === 'classroom' ? 'Marcus Vance' : activeProspect.name}</span>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-black text-white flex items-center gap-2 flex-wrap">
+                    <span className="truncate">{studioMode === 'classroom' ? 'Marcus Vance' : activeProspect.name}</span>
                     <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 text-[10px] font-semibold">
-                      {studioMode === 'classroom' ? 'Master Sales Instructor' : (activeProspect.role || activeProspect.industry)}
+                      {studioMode === 'classroom' ? 'Master Instructor' : (activeProspect.role || activeProspect.industry)}
                     </span>
                   </h3>
-                  <p className="text-xs text-indigo-300 font-medium">
+                  <p className="text-xs text-indigo-300 font-medium truncate">
                     {studioMode === 'classroom'
-                      ? `Training Target: ${activeProspect.name} (${activeProspect.companyName || 'General Contractor'})`
+                      ? `Target: ${activeProspect.name}`
                       : `${activeProspect.companyName} • ${activeProspect.city}`}
                   </p>
-                  <span className="text-[10px] text-slate-400 font-mono">
-                    {studioMode === 'classroom' ? 'Mode: Live 1-on-1 Spoken Masterclass & Script Lab' : `Context: ${activeProspect.tag}`}
-                  </span>
                 </div>
               </div>
 
               {/* Call Status Pill - Live timer */}
-              <div className="text-right">
+              <div className="text-right shrink-0">
                 <span className={`px-3 py-1 rounded-full text-xs font-bold border uppercase tracking-wider flex items-center gap-1.5 ${
                   isCallActive
-                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse font-mono'
+                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 font-mono'
                     : isDialing
-                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-bounce'
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse'
                     : 'bg-slate-800 text-slate-400 border-slate-700'
                 }`}>
                   <Radio className="w-3.5 h-3.5" />
-                  <span>{isCallActive ? formatSeconds(callDuration) : isDialing ? 'Connecting...' : 'Ready to Connect'}</span>
+                  <span>{isCallActive ? formatSeconds(callDuration) : isDialing ? 'Dialing...' : 'Ready'}</span>
                 </span>
               </div>
             </div>
 
-            {/* Central dialing HUD. PracticePage owns the single Live session. */}
-            <div className="relative">
-              <div className="w-full min-h-[380px] rounded-3xl bg-slate-900/70 border border-slate-800" aria-label="Practice live audio console" />
+            {/* Central Bidirectional Voice & Barge-In Console */}
+            <div className="relative rounded-3xl bg-slate-900/90 border border-slate-800 shadow-2xl overflow-hidden flex flex-col min-h-[430px]" aria-label="Practice live audio console">
+              {/* Top Telemetry & Barge-In Mode Bar */}
+              <div className="px-4 py-3 bg-slate-950/80 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 z-20">
+                <div className="flex items-center gap-2">
+                  <span className={`w-2.5 h-2.5 rounded-full ${
+                    !isCallActive
+                      ? 'bg-slate-600'
+                      : liveSessionState === 'speaking'
+                      ? 'bg-indigo-400 animate-pulse'
+                      : liveSessionState === 'thinking'
+                      ? 'bg-amber-400 animate-pulse'
+                      : 'bg-emerald-400 animate-pulse'
+                  }`} />
+                  <span className="text-xs font-bold text-slate-200">
+                    {!isCallActive
+                      ? 'Bidirectional Voice + Barge-In'
+                      : liveSessionState === 'speaking'
+                      ? `${studioMode === 'classroom' ? 'Coach Marcus' : activeProspect.name.split(' ')[0]} Speaking — Talk to interrupt`
+                      : liveSessionState === 'thinking'
+                      ? 'Thinking...'
+                      : 'Listening — Your turn'}
+                  </span>
+                  {bargeInFlash && (
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/50 text-amber-300 text-[10px] font-black uppercase tracking-wider">
+                      Barge-In!
+                    </span>
+                  )}
+                  {!bargeInFlash && bargeInCount > 0 && isCallActive && (
+                    <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-400 text-[10px] font-semibold">
+                      {bargeInCount} interrupt{bargeInCount === 1 ? '' : 's'}
+                    </span>
+                  )}
+                </div>
+
+                {/* Headphones vs. Speakers Barge-In Sensitivity Toggle */}
+                <div className="flex items-center gap-1.5">
+                  <div className="flex items-center bg-slate-900 p-0.5 rounded-xl border border-slate-800" title="Adjust barge-in threshold for headphones vs laptop speakers">
+                    <button
+                      type="button"
+                      onClick={() => handleChangeBargeInMode('headphones')}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 transition cursor-pointer ${
+                        bargeInMode === 'headphones'
+                          ? 'bg-indigo-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Headphones className="w-3 h-3" />
+                      <span>Headphones</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleChangeBargeInMode('speakers')}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 transition cursor-pointer ${
+                        bargeInMode === 'speakers'
+                          ? 'bg-amber-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Volume2 className="w-3 h-3" />
+                      <span>Speakers</span>
+                    </button>
+                  </div>
+
+                  {!isCallActive && (
+                    <button
+                      type="button"
+                      onClick={handleToggleMicPermission}
+                      className={`px-2.5 py-1 rounded-xl border text-[11px] font-bold flex items-center gap-1 transition cursor-pointer ${
+                        isMicGranted
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                          : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200'
+                      }`}
+                    >
+                      <Mic className="w-3 h-3" />
+                      <span>{isMicGranted ? 'Mic Ready' : 'Enable Mic'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Dual Live Amplitude Bars (AI Output vs Your Mic) */}
+              {isCallActive && (
+                <div className="px-4 py-2 bg-slate-950/40 border-b border-slate-800/70 grid grid-cols-2 gap-3 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold uppercase text-indigo-300 w-10 shrink-0">Voice</span>
+                    <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                      <div
+                        className="h-full bg-indigo-400 transition-all duration-75"
+                        style={{ width: `${Math.min(100, Math.round(audioAmplitude.output * 100))}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold uppercase text-emerald-300 w-10 shrink-0">Mic</span>
+                    <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-75 ${isMuted ? 'bg-rose-500/40' : 'bg-emerald-400'}`}
+                        style={{ width: `${isMuted ? 0 : Math.min(100, Math.round(audioAmplitude.input * 100))}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Live Bidirectional Transcript Stream */}
+              <div className="flex-1 overflow-y-auto p-4 pb-24 space-y-3 max-h-[360px]">
+                {transcriptTurns.length === 0 ? (
+                  <div className="h-full min-h-[240px] flex flex-col items-center justify-center text-center text-slate-500 text-xs px-6">
+                    <p>
+                      {isCallActive
+                        ? 'Connected! Speak aloud anytime—you can interrupt mid-sentence to test real-time barge-in.'
+                        : 'Start a live call to see the real-time bidirectional conversation here.'}
+                    </p>
+                  </div>
+                ) : (
+                  transcriptTurns.map((turn, idx) => {
+                    const isYou = turn.speaker === 'You';
+                    return (
+                      <div
+                        key={idx}
+                        className={`flex flex-col ${isYou ? 'items-end' : 'items-start'}`}
+                      >
+                        <div className="flex items-center gap-2 mb-1 px-1">
+                          <span className={`text-[10px] font-black uppercase tracking-wider ${isYou ? 'text-emerald-400' : 'text-indigo-400'}`}>
+                            {turn.speaker}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-mono">{turn.time}</span>
+                        </div>
+                        <div
+                          className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed border ${
+                            isYou
+                              ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-100 rounded-tr-sm'
+                              : 'bg-slate-950/90 border-slate-800 text-slate-100 rounded-tl-sm'
+                          }`}
+                        >
+                          {turn.text}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+                <div ref={transcriptEndRef} />
+              </div>
 
               {/* Central One-Click Call Button Overlay if Disconnected */}
               {!isCallActive && !isDialing && (
-                <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-xs rounded-3xl flex flex-col items-center justify-center p-6 gap-3 z-10">
+                <div className="absolute inset-0 top-[49px] bg-slate-950/75 backdrop-blur-xs flex flex-col items-center justify-center p-6 gap-3 z-10">
                   <button
                     type="button"
                     onClick={() => handleStartCall()}
@@ -811,36 +1046,49 @@ CRITICAL RULES:
                   </button>
                   <p className="text-xs text-slate-300 font-semibold text-center max-w-sm">
                     {studioMode === 'classroom'
-                      ? `Connect with Coach Marcus for live 1-on-1 audio training, tonality critique, and script co-creation for ${activeProspect.name}.`
-                      : `Tap to dial ${activeProspect.name}. Test your 20-second opening hook with live bidirectional audio.`}
+                      ? `Live bidirectional voice with Coach Marcus. Interrupt anytime to practice pacing and objections.`
+                      : `Dial ${activeProspect.name} with live bidirectional audio. Talk over objections anytime with instant barge-in.`}
                   </p>
                 </div>
               )}
 
               {/* In-Call Controls Overlay Bar */}
               {isCallActive && (
-                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 z-20 bg-slate-950/95 border border-slate-700/80 p-2 rounded-2xl shadow-2xl backdrop-blur-md">
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 z-20 bg-slate-950/95 border border-slate-700/80 p-2 rounded-2xl shadow-2xl backdrop-blur-md">
                   <button
                     type="button"
-                    onClick={() => {
-                      setIsMuted(!isMuted);
-                      if (liveSessionRef.current) liveSessionRef.current.setMuted(!isMuted);
-                    }}
-                    className={`p-3 rounded-xl border transition cursor-pointer ${
-                      isMuted ? 'bg-rose-600 text-white border-rose-500' : 'bg-slate-800 text-slate-300 hover:text-white border-slate-700'
+                    onClick={handleToggleMicPermission}
+                    className={`px-3 py-2.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                      !isMicGranted
+                        ? 'bg-amber-600 hover:bg-amber-500 text-white border-amber-400'
+                        : isMuted
+                        ? 'bg-rose-600 text-white border-rose-500'
+                        : 'bg-slate-800 text-emerald-300 hover:text-white border-slate-700'
                     }`}
-                    title={isMuted ? "Unmute" : "Mute"}
+                    title={!isMicGranted ? 'Enable microphone' : isMuted ? 'Unmute microphone' : 'Mute microphone'}
                   >
-                    {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                    {isMuted || !isMicGranted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                    <span className="hidden sm:inline">{!isMicGranted ? 'Turn Mic On' : isMuted ? 'Muted' : 'Mic On'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleManualInterrupt}
+                    disabled={liveSessionState !== 'speaking'}
+                    className="px-3 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 disabled:opacity-35 text-amber-300 border border-amber-500/40 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer"
+                    title="Cut off AI audio immediately and take the floor"
+                  >
+                    <Hand className="w-3.5 h-3.5" />
+                    <span>Interrupt</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={handleEndCall}
-                    className="px-6 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-rose-600/40 transition cursor-pointer active:scale-95"
+                    className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-rose-600/40 transition cursor-pointer active:scale-95"
                   >
                     <PhoneOff className="w-4 h-4" />
-                    <span>End Call &amp; Get Coaching</span>
+                    <span>End &amp; Score</span>
                   </button>
                 </div>
               )}
@@ -1014,59 +1262,37 @@ CRITICAL RULES:
           </div>
 
           {/* =========================================================================
-              RIGHT COLUMN: PINNED SIDE-DOCKED LIVE TELEPROMPTER (5 cols)
+              RIGHT COLUMN: FULL-SCRIPT TELEPROMPTER (6 cols normal / 8 cols expanded)
              ========================================================================= */}
-          <>
-          <div className="lg:col-span-5 h-[calc(100vh-8.5rem)] sticky top-24">
-            {(() => {
-              const activeScript = JSON.parse(localStorage.getItem('scriptmaster_active_script') || '{}');
-              const painProblem = typeof activeScript.painValue === 'object' && activeScript.painValue !== null
-                ? (activeScript.painValue.problem || activeScript.problem || currentScript.problem || CARL_DEFAULT_SCRIPT.problem)
-                : (typeof activeScript.painValue === 'string' ? activeScript.painValue : (activeScript.problem || currentScript.problem || CARL_DEFAULT_SCRIPT.problem));
-
-              const painVal = typeof activeScript.painValue === 'object' && activeScript.painValue !== null
-                ? (activeScript.painValue.value || activeScript.value || currentScript.value || CARL_DEFAULT_SCRIPT.value)
-                : (activeScript.value || currentScript.value || CARL_DEFAULT_SCRIPT.value);
-
-              const teleprompterScript = {
-                ...CARL_DEFAULT_SCRIPT,
-                ...currentScript,
-                ...(activeScript.hook || activeScript.closingAsk || activeScript.painValue ? activeScript : {}),
-                hook: activeScript.hook || currentScript.hook || CARL_DEFAULT_SCRIPT.hook,
-                painValue: activeScript.painValue || currentScript.painValue || {
-                  problem: painProblem,
-                  value: painVal
-                },
-                problem: painProblem,
-                value: painVal,
-                closingAsk: activeScript.closingAsk || currentScript.closingAsk || CARL_DEFAULT_SCRIPT.closingAsk
-              };
-
-              return (
-                <PracticeTeleprompter
-                  script={teleprompterScript}
-                  onDemonstrate={handleDemonstrateLine}
-                  onScriptChange={(updated) => {
-                    const next = {
-                      ...updated,
-                      painValue: typeof updated.painValue === 'object'
-                        ? { problem: updated.problem, value: updated.value }
-                        : updated.problem
-                    };
-                    setCurrentScript(next);
-                    localStorage.setItem('scriptmaster_active_script', JSON.stringify(next));
-                    window.dispatchEvent(new Event('scriptmaster_script_updated'));
-                    if (setGlobalScript) setGlobalScript(next);
-                  }}
-                  activeObjectionIndex={activeObjectionIndex}
-                  activeScriptPart={activeScriptPart}
-                  isCallActive={isCallActive}
-                  className="h-full"
-                />
-              );
-            })()}
+          <div className={`${isScriptExpanded ? 'lg:col-span-8' : 'lg:col-span-6'} h-[calc(100vh-8.5rem)] sticky top-24 transition-all`}>
+            <PracticeTeleprompter
+              script={currentScript}
+              onDemonstrate={handleDemonstrateLine}
+              onScriptChange={(updated) => {
+                const next = {
+                  ...updated,
+                  painValue: {
+                    problem: updated.problem || updated.painValue?.problem || '',
+                    value: updated.value || updated.painValue?.value || '',
+                  },
+                };
+                setCurrentScript(next);
+                try {
+                  localStorage.setItem('scriptmaster_active_script', JSON.stringify(next));
+                  window.dispatchEvent(new Event('scriptmaster_script_updated'));
+                } catch {
+                  /* ignore */
+                }
+                if (setGlobalScript) setGlobalScript(next);
+              }}
+              activeObjectionIndex={activeObjectionIndex}
+              activeScriptPart={activeScriptPart}
+              isCallActive={isCallActive}
+              isExpanded={isScriptExpanded}
+              onToggleExpand={() => setIsScriptExpanded((prev) => !prev)}
+              className="h-full"
+            />
           </div>
-          </>
 
         </div>
       </main>

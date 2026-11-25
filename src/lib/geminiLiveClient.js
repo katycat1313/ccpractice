@@ -26,6 +26,7 @@ export class GeminiLiveSession {
       apiKey: options.apiKey || '',
       micStream: options.micStream || null,
       lowCostMode: Boolean(options.lowCostMode),
+      bargeInMode: options.bargeInMode === 'speakers' ? 'speakers' : 'headphones',
       onStateChange: options.onStateChange || (() => {}),
       onAudioAmplitude: options.onAudioAmplitude || (() => {}),
       onTextToken: options.onTextToken || (() => {}),
@@ -57,6 +58,8 @@ export class GeminiLiveSession {
     this.currentUserTranscript = '';
     this.userSpeechChunkCount = 0;
     this.bargeInCount = 0;
+    this.consecutiveBargeInFrames = 0;
+    this.lastBargeInAt = 0;
     this.isReady = false;
     this.micReady = false;
     this.stoppedByUser = false;
@@ -162,9 +165,13 @@ export class GeminiLiveSession {
           voiceName: this.options.voiceName || 'Zephyr',
           systemInstruction: this.options.systemInstruction,
           initialPrompt: shouldGreet ? this.options.initialPrompt || '' : '',
+          bargeInMode: this.options.bargeInMode || 'headphones',
           ...(dgKey ? { deepgramApiKey: dgKey } : {}),
         })
       );
+      if (this.options.bargeInMode === 'speakers') {
+        ws.send(JSON.stringify({ type: 'config', bargeInMode: 'speakers' }));
+      }
       this.setState('connected');
       this.startAmplitudeMonitor();
     };
@@ -388,20 +395,31 @@ registerProcessor('gemini-audio-recorder-processor', GeminiAudioRecorderProcesso
     }
     const rms = Math.sqrt(sum / inputData.length);
 
-    if (rms > 0.022) {
+    const isSpeakerMode = this.options.bargeInMode === 'speakers';
+    const speechThreshold = isSpeakerMode ? 0.028 : 0.020;
+    const bargeThreshold = isSpeakerMode ? 0.072 : 0.038;
+    const requiredBargeFrames = isSpeakerMode ? 4 : 3;
+
+    if (rms > speechThreshold) {
       this.userSpeechChunkCount++;
       if (this.options.onUserSpeechChunk) {
         const { pitchHz, confidence } = this.estimatePitch(inputData, 16000);
         this.options.onUserSpeechChunk({ rms, pitchHz, confidence, chunkCount: this.userSpeechChunkCount });
       }
+    }
 
-      // Immediate client-side barge-in: stop AI output as soon as user speaks clearly
-      if (this.isPlayingAudio && rms > 0.036) {
-        this.bargeInCount++;
-        this.stopAudioPlayback();
-        this.setState('listening');
-        this.options.onInterrupted({ source: 'barge-in', count: this.bargeInCount });
-      } else if (this.state !== 'speaking') {
+    // Debounced client-side barge-in: require consecutive voiced frames (~90-130ms)
+    // so sudden keyboard clicks or laptop speaker bleed don't false-trigger.
+    if (this.isPlayingAudio && rms > bargeThreshold) {
+      this.consecutiveBargeInFrames += 1;
+      const now = Date.now();
+      if (this.consecutiveBargeInFrames >= requiredBargeFrames && now - this.lastBargeInAt > 450) {
+        this.consecutiveBargeInFrames = 0;
+        this.interruptAI('barge-in');
+      }
+    } else {
+      this.consecutiveBargeInFrames = 0;
+      if (rms > speechThreshold && this.state !== 'speaking') {
         this.setState('listening');
       }
     }
@@ -413,6 +431,35 @@ registerProcessor('gemini-audio-recorder-processor', GeminiAudioRecorderProcesso
       this.ws.send(JSON.stringify({ type: 'audio', data: base64Data }));
     } catch {
       /* ignore */
+    }
+  }
+
+  interruptAI(source = 'manual') {
+    this.lastBargeInAt = Date.now();
+    this.consecutiveBargeInFrames = 0;
+    this.bargeInCount += 1;
+    this.stopAudioPlayback();
+    this.setState('listening');
+    this.options.onInterrupted({ source, count: this.bargeInCount });
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify({ type: 'interrupt' }));
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  setBargeInMode(mode) {
+    const normalized = mode === 'speakers' ? 'speakers' : 'headphones';
+    this.options.bargeInMode = normalized;
+    this.consecutiveBargeInFrames = 0;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify({ type: 'config', bargeInMode: normalized }));
+      } catch {
+        /* ignore */
+      }
     }
   }
 

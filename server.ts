@@ -1413,6 +1413,8 @@ function attachGeminiLiveBridge(httpServer: http.Server) {
               turns: [{ role: 'user', parts: [{ text: String(msg.text) }] }],
               turnComplete: true,
             });
+          } else if (msg.type === 'interrupt') {
+            sendSafe({ type: 'interrupted' });
           }
         } catch (sendErr: any) {
           console.warn('[GeminiLiveBridge] Forward error:', sendErr?.message);
@@ -1422,6 +1424,21 @@ function attachGeminiLiveBridge(httpServer: http.Server) {
 
       // Handle live messages for Real-API HTTP+PCM Bridge
       if (fallbackEngine) {
+        if (msg.type === 'config') {
+          if (msg.bargeInMode === 'speakers' || msg.bargeInMode === 'headphones') {
+            (fallbackEngine as any).bargeInMode = msg.bargeInMode;
+          }
+          return;
+        }
+
+        if (msg.type === 'interrupt') {
+          fallbackEngine.generationToken++;
+          fallbackEngine.isProcessingTurn = false;
+          (fallbackEngine as any).consecutiveBargeInFrames = 0;
+          sendSafe({ type: 'interrupted' });
+          return;
+        }
+
         if (msg.type === 'video' && msg.data) {
           fallbackEngine.latestVideoFrameB64 = String(msg.data).replace(/^data:image\/\w+;base64,/, '');
           return;
@@ -1450,14 +1467,30 @@ function attachGeminiLiveBridge(httpServer: http.Server) {
           }
           const rms = Math.sqrt(sumSq / sampleCount);
 
-          // Barge-in requires clear speech energy so speaker bleed doesn't false-trigger
-          if (fallbackEngine.isProcessingTurn && rms > 0.036) {
-            fallbackEngine.generationToken++;
-            fallbackEngine.isProcessingTurn = false;
-            sendSafe({ type: 'interrupted' });
+          const isSpeakerMode = (fallbackEngine as any).bargeInMode === 'speakers';
+          const bargeThreshold = isSpeakerMode ? 0.072 : 0.038;
+          const requiredFrames = isSpeakerMode ? 4 : 3;
+
+          // Barge-in requires consecutive voiced frames so transient clicks/speaker bleed don't false-trigger
+          if (fallbackEngine.isProcessingTurn) {
+            if (rms > bargeThreshold) {
+              (fallbackEngine as any).consecutiveBargeInFrames =
+                ((fallbackEngine as any).consecutiveBargeInFrames || 0) + 1;
+              if ((fallbackEngine as any).consecutiveBargeInFrames >= requiredFrames) {
+                fallbackEngine.generationToken++;
+                fallbackEngine.isProcessingTurn = false;
+                (fallbackEngine as any).consecutiveBargeInFrames = 0;
+                sendSafe({ type: 'interrupted' });
+              }
+            } else {
+              (fallbackEngine as any).consecutiveBargeInFrames = 0;
+            }
+          } else {
+            (fallbackEngine as any).consecutiveBargeInFrames = 0;
           }
 
-          const isVoiced = rms > 0.016;
+          const voicedThreshold = isSpeakerMode ? 0.024 : 0.016;
+          const isVoiced = rms > voicedThreshold;
           if (isVoiced) {
             fallbackEngine.speechBuffers.push(pcmChunk);
             if (fallbackEngine.silenceTimer) {
