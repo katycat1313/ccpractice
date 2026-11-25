@@ -35,8 +35,7 @@ import {
   TrendingUp,
   Brain
 } from 'lucide-react';
-import { GoogleGenAI } from '@google/genai';
-import { getGeminiApiKey, askGeminiCoach, getGeminiTTSAudio } from '../lib/geminiClient';
+import { askGeminiCoach, getGeminiTTSAudio } from '../lib/geminiClient';
 import { resolveProspectVoice } from '../lib/voiceResolver';
 import { GeminiLiveSession } from '../lib/geminiLiveClient';
 import { playPickupClick, playHangupClick } from '../lib/soundUtils';
@@ -221,10 +220,9 @@ export default function DiscoveryClosingLab() {
   const activePersona = TRADE_PERSONAS.find(p => p.id === offerDna.targetTrade) || TRADE_PERSONAS[0];
   const activeStep = METHODOLOGY_STEPS.find(s => s.step === activeStepTab) || METHODOLOGY_STEPS[0];
 
-  // Synthesize Verbatim Discovery & Closing Playbook with Gemini 3.8 Flash
+  // Synthesize Verbatim Discovery & Closing Playbook
   const handleSynthesizePlaybook = async () => {
     setIsSynthesizing(true);
-    const clientKey = getGeminiApiKey();
 
     const prompt = `You are Coach Marcus Vance, world-class B2B Sales Methodologist specializing in modern sales science for blue-collar contractors.
 GIVEN APP/OFFER DNA:
@@ -263,35 +261,14 @@ OUTPUT STRICTLY VALID JSON IN THIS FORMAT:
 
     try {
       let result = null;
-      if (clientKey) {
-        try {
-          const ai = new GoogleGenAI({ apiKey: clientKey });
-          const res = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
-            contents: prompt,
-            config: {
-              temperature: 0.4,
-              responseMimeType: 'application/json'
-            }
-          });
-          if (res?.text) {
-            result = JSON.parse(res.text);
-          }
-        } catch (apiErr) {
-          console.warn('Direct gemini-3.8-flash synthesis fallback:', apiErr);
-        }
-      }
-
-      if (!result) {
-        const backendRes = await askGeminiCoach({
-          systemPrompt: "You are Marcus Vance. Return strictly valid JSON containing the customized sales playbook.",
-          userMessage: prompt,
-          stage: 'script_building'
-        });
-        if (backendRes?.text) {
-          const match = backendRes.text.match(/\{[\s\S]*\}/);
-          if (match) result = JSON.parse(match[0]);
-        }
+      const backendRes = await askGeminiCoach({
+        systemPrompt: "You are Marcus Vance. Return strictly valid JSON containing the customized sales playbook.",
+        userMessage: prompt,
+        stage: 'script_building'
+      });
+      if (backendRes?.text) {
+        const match = backendRes.text.match(/\{[\s\S]*\}/);
+        if (match) result = JSON.parse(match[0]);
       }
 
       if (!result) {
@@ -332,13 +309,12 @@ OUTPUT STRICTLY VALID JSON IN THIS FORMAT:
     }
   };
 
-  // Evaluate Step Exercise with Gemini 3.8 Flash
+  // Evaluate Step Exercise
   const handleEvaluateExercise = async (e) => {
     if (e) e.preventDefault();
     if (!exerciseInput.trim() || isEvaluatingExercise) return;
 
     setIsEvaluatingExercise(true);
-    const clientKey = getGeminiApiKey();
 
     const prompt = `You are Coach Marcus Vance, evaluating a sales rep's phrasing for ${activeStep.title}.
 RELEVANT STAGE: ${activeStep.title} (${activeStep.subtitle})
@@ -366,35 +342,14 @@ OUTPUT STRICTLY AS JSON:
 
     try {
       let evaluation = null;
-      if (clientKey) {
-        try {
-          const ai = new GoogleGenAI({ apiKey: clientKey });
-          const res = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
-            contents: prompt,
-            config: {
-              temperature: 0.3,
-              responseMimeType: 'application/json'
-            }
-          });
-          if (res?.text) {
-            evaluation = JSON.parse(res.text);
-          }
-        } catch (apiErr) {
-          console.warn('Exercise evaluation fallback:', apiErr);
-        }
-      }
-
-      if (!evaluation) {
-        const backendRes = await askGeminiCoach({
-          systemPrompt: "You are Marcus Vance evaluating sales phrasing. Return strictly JSON.",
-          userMessage: prompt,
-          stage: 'workshop_micro_drill'
-        });
-        if (backendRes?.text) {
-          const match = backendRes.text.match(/\{[\s\S]*\}/);
-          if (match) evaluation = JSON.parse(match[0]);
-        }
+      const backendRes = await askGeminiCoach({
+        systemPrompt: "You are Marcus Vance evaluating sales phrasing. Return strictly JSON.",
+        userMessage: prompt,
+        stage: 'workshop_micro_drill'
+      });
+      if (backendRes?.text) {
+        const match = backendRes.text.match(/\{[\s\S]*\}/);
+        if (match) evaluation = JSON.parse(match[0]);
       }
 
       if (!evaluation) {
@@ -449,10 +404,6 @@ OUTPUT STRICTLY AS JSON:
 
   // Toggle Live Voice Call with Marcus / Prospect (Gemini 3.8 Live)
   const handleToggleLiveAudioSparring = async () => {
-    if (isInIframe) {
-      setIsIframeMicModalOpen(true);
-      return;
-    }
 
     if (isLiveAudioConnected) {
       if (liveSessionRef.current) {
@@ -533,7 +484,6 @@ YOUR ROLEPLAY BEHAVIOR:
 
     setSparringMessages(prev => [...prev, userMsg]);
     const selected = TRADE_PERSONAS.find(p => p.id === sparringTrade) || TRADE_PERSONAS[0];
-    const clientKey = getGeminiApiKey();
 
     const prompt = `You are simulating a live cold call roleplay with a sales rep.
 YOU ARE: ${selected.name}, ${selected.defaultTrade}.
@@ -564,33 +514,14 @@ OUTPUT STRICTLY AS JSON:
 
     try {
       let responseData = null;
-      if (clientKey) {
-        try {
-          const ai = new GoogleGenAI({ apiKey: clientKey });
-          const res = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
-            contents: prompt,
-            config: {
-              temperature: 0.5,
-              responseMimeType: 'application/json'
-            }
-          });
-          if (res?.text) responseData = JSON.parse(res.text);
-        } catch (apiErr) {
-          console.warn('Direct gemini-3.8-flash sparring fallback:', apiErr);
-        }
-      }
-
-      if (!responseData) {
-        const backendRes = await askGeminiCoach({
-          systemPrompt: "You are roleplaying a contractor and coaching a sales rep. Return strictly JSON.",
-          userMessage: prompt,
-          stage: 'cold_call_simulation'
-        });
-        if (backendRes?.text) {
-          const match = backendRes.text.match(/\{[\s\S]*\}/);
-          if (match) responseData = JSON.parse(match[0]);
-        }
+      const backendRes = await askGeminiCoach({
+        systemPrompt: "You are roleplaying a contractor and coaching a sales rep. Return strictly JSON.",
+        userMessage: prompt,
+        stage: 'cold_call_simulation'
+      });
+      if (backendRes?.text) {
+        const match = backendRes.text.match(/\{[\s\S]*\}/);
+        if (match) responseData = JSON.parse(match[0]);
       }
 
       if (!responseData) {
@@ -627,10 +558,6 @@ OUTPUT STRICTLY AS JSON:
 
   // Mic Toggle for Sparring
   const toggleSparringVoiceInput = () => {
-    if (isInIframe) {
-      setIsIframeMicModalOpen(true);
-      return;
-    }
 
     if (isSparringListening) {
       if (recognitionRef.current) {

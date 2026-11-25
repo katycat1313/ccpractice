@@ -86,6 +86,7 @@ export default function VideoInterviewStudioPage() {
 
   const [callState, setCallState] = useState('disconnected');
   const [isMuted, setIsMuted] = useState(false);
+  const [isMicGranted, setIsMicGranted] = useState(false);
   const [isUserCamOn, setIsUserCamOn] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [everScreenShared, setEverScreenShared] = useState(false);
@@ -106,6 +107,7 @@ export default function VideoInterviewStudioPage() {
   const [debriefReport, setDebriefReport] = useState(null);
 
   const liveSessionRef = useRef(null);
+  const prewarmedMicStreamRef = useRef(null);
   const userVideoRef = useRef(null);
   const userCamStreamRef = useRef(null);
   const screenVideoRef = useRef(null);
@@ -166,6 +168,14 @@ export default function VideoInterviewStudioPage() {
   useEffect(() => {
     return () => {
       liveSessionRef.current?.stop();
+      if (prewarmedMicStreamRef.current) {
+        try {
+          prewarmedMicStreamRef.current.getTracks().forEach((t) => t.stop());
+        } catch {
+          /* ignore */
+        }
+        prewarmedMicStreamRef.current = null;
+      }
       stopScreenShareInternal();
       stopUserCamInternal();
     };
@@ -350,11 +360,28 @@ export default function VideoInterviewStudioPage() {
     const agentVoice = resolveAgentVoice(targetAgent);
     let pendingUserText = '';
 
+    const hasPrewarmedMic =
+      prewarmedMicStreamRef.current &&
+      prewarmedMicStreamRef.current.getAudioTracks?.().some((t) => t.readyState === 'live');
+
     const session = new GeminiLiveSession({
       voiceName: agentVoice.liveVoice,
+      micStream: hasPrewarmedMic ? prewarmedMicStreamRef.current : null,
       systemInstruction,
       initialPrompt: `Start the live video call right now by greeting the user naturally in 1–2 sentences along these lines: "${openingLine}"`,
-      onStateChange: (st) => setCallState(st),
+      onStateChange: (st) => {
+        setCallState(st);
+        if (st === 'disconnected') {
+          setIsMicGranted(false);
+        }
+      },
+      onMicStatusChange: (active) => {
+        setIsMicGranted(Boolean(active));
+        if (active) {
+          setIsMuted(false);
+          setErrorBanner('');
+        }
+      },
       onAudioAmplitude: (amp) => setAudioAmplitude(amp),
       onInputTranscript: (_chunk, fullUserText) => {
         pendingUserText = fullUserText;
@@ -399,6 +426,7 @@ export default function VideoInterviewStudioPage() {
         setLiveAgentCaption('');
       },
       onIframeMicBlocked: () => {
+        setIsMicGranted(false);
         setIsIframeMicModalOpen(true);
       },
       onError: (err) => {
@@ -406,7 +434,9 @@ export default function VideoInterviewStudioPage() {
       },
     });
 
+    prewarmedMicStreamRef.current = null;
     liveSessionRef.current = session;
+    session.setMuted(isMuted);
     await session.start();
   }
 
@@ -471,7 +501,50 @@ export default function VideoInterviewStudioPage() {
     }
   }
 
-  function handleToggleMute() {
+  async function handleToggleMute() {
+    // 1. Before a live call starts: allow user to turn Mic On/Off directly
+    if (!isCallActive || !liveSessionRef.current) {
+      const hasPrewarmed =
+        prewarmedMicStreamRef.current &&
+        prewarmedMicStreamRef.current.getAudioTracks?.().some((t) => t.readyState === 'live');
+      if (hasPrewarmed && !isMuted) {
+        prewarmedMicStreamRef.current.getTracks().forEach((t) => t.stop());
+        prewarmedMicStreamRef.current = null;
+        setIsMicGranted(false);
+        setIsMuted(true);
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        });
+        prewarmedMicStreamRef.current = stream;
+        setIsMicGranted(true);
+        setIsMuted(false);
+        setErrorBanner('');
+      } catch (err) {
+        setIsMicGranted(false);
+        if (err?.name === 'NotAllowedError' || err?.name === 'SecurityError') {
+          setIsIframeMicModalOpen(true);
+        } else {
+          setErrorBanner(err?.message || 'Unable to access microphone.');
+        }
+      }
+      return;
+    }
+
+    // 2. During an active call: if mic wasn't granted yet, request & attach it now
+    if (!liveSessionRef.current.hasActiveMic()) {
+      const ok = await liveSessionRef.current.enableMicrophone();
+      if (ok) {
+        setIsMicGranted(true);
+        setIsMuted(false);
+        setErrorBanner('');
+      }
+      return;
+    }
+
+    // 3. Otherwise toggle mute/unmute
     const next = !isMuted;
     setIsMuted(next);
     liveSessionRef.current?.setMuted(next);
@@ -819,15 +892,30 @@ export default function VideoInterviewStudioPage() {
                     <button
                       type="button"
                       onClick={handleToggleMute}
-                      disabled={!isCallActive}
-                      className={`px-3 py-2 rounded-xl border text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
-                        isMuted
-                          ? 'bg-amber-950/80 border-amber-500/40 text-amber-200'
-                          : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800 disabled:opacity-45'
+                      className={`px-3 py-2 rounded-xl border text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                        isMuted || (isCallActive && !isMicGranted)
+                          ? 'bg-amber-950/80 border-amber-500/40 text-amber-200 hover:bg-amber-900/70'
+                          : isMicGranted
+                          ? 'bg-emerald-950/80 border-emerald-500/40 text-emerald-200 hover:bg-emerald-900/70'
+                          : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
                       }`}
                     >
-                      {isMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                      <span>{isMuted ? 'Muted' : 'Mic On'}</span>
+                      {isMuted || (isCallActive && !isMicGranted) ? (
+                        <MicOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Mic className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {isCallActive
+                          ? !isMicGranted
+                            ? 'Turn Mic On'
+                            : isMuted
+                            ? 'Muted'
+                            : 'Mic On'
+                          : isMicGranted && !isMuted
+                          ? 'Mic Ready'
+                          : 'Enable Mic'}
+                      </span>
                     </button>
 
                     <button

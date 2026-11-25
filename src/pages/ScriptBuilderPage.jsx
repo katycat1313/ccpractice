@@ -24,7 +24,6 @@ import {
   BookOpen
 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
-import { GoogleGenAI } from '@google/genai';
 import IframeMicModal from '../components/IframeMicModal';
 import { askGeminiCoach } from '../lib/geminiClient';
 import { getCoachMemory, extractMemoryFromInput, generateMemoryAwareFallback } from '../lib/coachMemory';
@@ -302,31 +301,6 @@ Always append a machine-readable JSON action block at the very end in case clien
 \`\`\`json
 { "action": "saveScriptToScriptsPage", "params": { ... } }
 \`\`\``;
-
-function getGeminiApiKey() {
-  if (typeof window !== 'undefined') {
-    if (window.env?.GEMINI_API_KEY) return window.env.GEMINI_API_KEY;
-    if (window.process?.env?.API_KEY) return window.process.env.API_KEY;
-    if (window.process?.env?.GEMINI_API_KEY) return window.process.env.GEMINI_API_KEY;
-  }
-  if (typeof process !== 'undefined') {
-    if (process.env?.API_KEY) return process.env.API_KEY;
-    if (process.env?.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
-  }
-  try {
-    const viteKey = import.meta.env?.VITE_GEMINI_API_KEY;
-    if (viteKey) return viteKey;
-  } catch {
-    /* ignore */
-  }
-  try {
-    const local = localStorage.getItem('gemini_api_key');
-    if (local) return local;
-  } catch {
-    /* ignore */
-  }
-  return '';
-}
 
 export default function ScriptBuilderPage({ script, setScript }) {
   const navigate = useNavigate();
@@ -790,11 +764,6 @@ export default function ScriptBuilderPage({ script, setScript }) {
 
   // Voice speech-to-text dictation
   const toggleVoiceInput = () => {
-    if (isInIframe) {
-      setIsIframeMicModalOpen(true);
-      return;
-    }
-
     if (isListening) {
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch { /* ignore */ }
@@ -824,7 +793,7 @@ export default function ScriptBuilderPage({ script, setScript }) {
       };
       recognition.onerror = (e) => {
         setIsListening(false);
-        if (isInIframe || e?.error === 'not-allowed') {
+        if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
           setIsIframeMicModalOpen(true);
         }
       };
@@ -1136,75 +1105,7 @@ EXISTING TRADE PERSONAS: ${prospectsList.map(p => `${p.name} (${p.industry || p.
 
 USER MESSAGE: ${query}`;
 
-    // 1. Direct call via @google/genai with strictly whitelisted function declarations
-    const clientApiKey = getGeminiApiKey();
-    if (clientApiKey) {
-      try {
-        const ai = new GoogleGenAI({ apiKey: clientApiKey });
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: [
-            ...chatMessages.slice(-6).map(m => ({
-              role: m.sender === 'user' ? 'user' : 'model',
-              parts: [{ text: m.text }]
-            })),
-            {
-              role: 'user',
-              parts: [{ text: currentScriptContext }]
-            }
-          ],
-          config: {
-            systemInstruction: MARCUS_COACH_SYSTEM_PROMPT,
-            temperature: 0.5,
-            tools: [{ functionDeclarations: MARCUS_WHITELISTED_TOOLS }]
-          }
-        });
-
-        // Check for native function calls
-        const functionCalls = response?.functionCalls || [];
-        if (functionCalls.length > 0) {
-          functionCalls.forEach(fc => {
-            const summary = executeScriptToolCall(fc.name, fc.args);
-            if (summary) {
-              executedTools.push({ toolName: fc.name, summary, args: fc.args });
-            }
-          });
-
-          setIsExecutingTool(false);
-          setIsCoachThinking(false);
-
-          if (!replyText) {
-            replyText = `Locked in! I updated your live script document on the left: ${executedTools.map(t => t.summary).join(' | ')}`;
-          }
-        }
-
-        // Also check candidate parts for functionCall objects
-        const candidateParts = response?.candidates?.[0]?.content?.parts || [];
-        candidateParts.forEach(p => {
-          if (p.functionCall) {
-            const summary = executeScriptToolCall(p.functionCall.name, p.functionCall.args);
-            if (summary && !executedTools.some(t => t.toolName === p.functionCall.name)) {
-              executedTools.push({ toolName: p.functionCall.name, summary, args: p.functionCall.args });
-            }
-
-            setIsExecutingTool(false);
-            setIsCoachThinking(false);
-
-            if (!replyText) {
-              replyText = `Locked in! I updated your live script document on the left: ${executedTools.map(t => t.summary).join(' | ')}`;
-            }
-          }
-        });
-
-        if (response?.text) {
-          replyText = response.text.trim();
-        }
-      } catch (clientErr) {
-        console.warn('GoogleGenAI tool call error, falling back to server route:', clientErr);
-      }
-    }
-
-    // 2. Fallback to server route (which has process.env.GEMINI_API_KEY) only if no tool executed yet
+    // Route through server-side Gemini 4 Hydrogen endpoint
     if (!replyText && executedTools.length === 0) {
       try {
         const backendRes = await askGeminiCoach({

@@ -20,10 +20,6 @@ export default function Navbar() {
   })();
 
   const handleMicButtonClick = () => {
-    if (isInIframe) {
-      setIsIframeMicModalOpen(true);
-      return;
-    }
     // The global Navbar mic belongs to Coach. Practice is opened separately
     // by Coach when the student is ready; this button must not route there.
     window.dispatchEvent(new Event('scriptmaster_open_coach'));

@@ -13,7 +13,7 @@
  * - Bidirectional Input & Output Audio Transcriptions
  */
 
-import { getGeminiApiKey as getStoredGeminiKey } from './geminiClient';
+import { getDeepgramApiKey } from './deepgramService';
 
 export const MARCUS_CLASSROOM_INSTRUCTOR_PROMPT = `You are Marcus Vance, an elite, direct, supportive Career & Sales Coach. Speak naturally, concisely (1 to 3 sentences per turn), and adapt immediately to interruptions.`;
 
@@ -58,6 +58,10 @@ export class GeminiLiveSession {
     this.userSpeechChunkCount = 0;
     this.bargeInCount = 0;
     this.isReady = false;
+    this.micReady = false;
+    this.stoppedByUser = false;
+    this.reconnectCount = 0;
+    this.hasSentInitialPrompt = false;
   }
 
   setState(newState) {
@@ -67,13 +71,12 @@ export class GeminiLiveSession {
     }
   }
 
-  resolveOptionalKey() {
-    if (this.options.apiKey && this.options.apiKey.trim().length > 20) {
-      return this.options.apiKey.trim();
-    }
-    const stored = getStoredGeminiKey();
-    if (stored && stored.length > 20) return stored;
-    return '';
+  hasActiveMic() {
+    return Boolean(
+      this.micReady &&
+        this.micStream &&
+        this.micStream.getAudioTracks?.().some((t) => t.readyState === 'live')
+    );
   }
 
   async resumeAudioContexts() {
@@ -106,6 +109,9 @@ export class GeminiLiveSession {
     }
 
     this.setState('connecting');
+    this.stoppedByUser = false;
+    this.reconnectCount = 0;
+    this.hasSentInitialPrompt = false;
     this.userSpeechChunkCount = 0;
     this.bargeInCount = 0;
     this.isReady = false;
@@ -114,7 +120,7 @@ export class GeminiLiveSession {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       this.audioOutputContext = new AudioCtx({ sampleRate: 24000 });
       if (this.audioOutputContext.state === 'suspended') {
-        await this.audioOutputContext.resume();
+        await this.audioOutputContext.resume().catch(() => {});
       }
 
       this.outputAnalyser = this.audioOutputContext.createAnalyser();
@@ -122,40 +128,13 @@ export class GeminiLiveSession {
       this.outputAnalyser.smoothingTimeConstant = 0.72;
       this.outputAnalyser.connect(this.audioOutputContext.destination);
 
-      await this.initMicrophoneCapture();
+      // Connect WebSocket immediately so a blocked/pending mic never kills the live call!
+      this.openBridgeWebSocket();
 
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${proto}//${window.location.host}/ws/live`;
-      this.ws = new WebSocket(wsUrl);
-
-      this.ws.onopen = () => {
-        const optionalKey = this.resolveOptionalKey();
-        this.ws.send(
-          JSON.stringify({
-            type: 'setup',
-            voiceName: this.options.voiceName || 'Zephyr',
-            systemInstruction: this.options.systemInstruction,
-            initialPrompt: this.options.initialPrompt || '',
-            ...(optionalKey ? { apiKey: optionalKey } : {}),
-          })
-        );
-        this.setState('connected');
-        this.startAmplitudeMonitor();
-      };
-
-      this.ws.onmessage = async (event) => {
-        await this.handleBridgeMessage(event.data);
-      };
-
-      this.ws.onerror = () => {
-        this.setState('error');
-        this.options.onError(new Error('Live audio connection failed. Please try reconnecting.'));
-      };
-
-      this.ws.onclose = () => {
-        this.cleanup();
-        this.setState('disconnected');
-      };
+      // Request microphone in parallel without aborting the WebSocket session if denied
+      await this.initMicrophoneCapture({ silentIfBlocked: false }).catch((micErr) => {
+        console.warn('[GeminiLiveSession] Continuing call without mic until enabled:', micErr?.message || micErr);
+      });
     } catch (err) {
       this.cleanup();
       this.setState('error');
@@ -163,13 +142,90 @@ export class GeminiLiveSession {
     }
   }
 
-  async initMicrophoneCapture() {
+  openBridgeWebSocket() {
+    if (this.stoppedByUser) return;
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${proto}//${window.location.host}/ws/live`;
+    const ws = new WebSocket(wsUrl);
+    this.ws = ws;
+
+    ws.onopen = () => {
+      if (this.stoppedByUser || this.ws !== ws) return;
+      this.reconnectCount = 0;
+      const dgKey = getDeepgramApiKey();
+      const shouldGreet = !this.hasSentInitialPrompt;
+      this.hasSentInitialPrompt = true;
+
+      ws.send(
+        JSON.stringify({
+          type: 'setup',
+          voiceName: this.options.voiceName || 'Zephyr',
+          systemInstruction: this.options.systemInstruction,
+          initialPrompt: shouldGreet ? this.options.initialPrompt || '' : '',
+          ...(dgKey ? { deepgramApiKey: dgKey } : {}),
+        })
+      );
+      this.setState('connected');
+      this.startAmplitudeMonitor();
+    };
+
+    ws.onmessage = async (event) => {
+      if (this.ws !== ws) return;
+      await this.handleBridgeMessage(event.data);
+    };
+
+    ws.onerror = () => {
+      if (this.stoppedByUser || this.ws !== ws) return;
+      // Wait for onclose to decide whether to auto-reconnect
+    };
+
+    ws.onclose = (ev) => {
+      if (this.stoppedByUser || this.ws !== ws) return;
+      if (this.reconnectCount < 2 && ev?.code !== 1000) {
+        this.reconnectCount += 1;
+        this.isReady = false;
+        setTimeout(() => {
+          if (!this.stoppedByUser) {
+            this.openBridgeWebSocket();
+          }
+        }, 600 * this.reconnectCount);
+        return;
+      }
+      this.cleanup();
+      this.setState('disconnected');
+    };
+  }
+
+  async enableMicrophone() {
+    if (this.hasActiveMic()) {
+      this.isMuted = false;
+      if (this.options.onMicStatusChange) {
+        this.options.onMicStatusChange(true);
+      }
+      return true;
+    }
+    try {
+      await this.initMicrophoneCapture({ silentIfBlocked: false });
+      this.isMuted = false;
+      if (this.options.onMicStatusChange) {
+        this.options.onMicStatusChange(true);
+      }
+      return true;
+    } catch {
+      if (this.options.onMicStatusChange) {
+        this.options.onMicStatusChange(false);
+      }
+      return false;
+    }
+  }
+
+  async initMicrophoneCapture({ silentIfBlocked = false } = {}) {
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Microphone audio is not supported by this browser.');
       }
 
-      if (this.options.micStream) {
+      if (this.options.micStream && this.options.micStream.getAudioTracks?.().some((t) => t.readyState === 'live')) {
         this.micStream = this.options.micStream;
       } else {
         try {
@@ -182,9 +238,11 @@ export class GeminiLiveSession {
       }
 
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      this.audioInputContext = new AudioCtx();
+      if (!this.audioInputContext || this.audioInputContext.state === 'closed') {
+        this.audioInputContext = new AudioCtx();
+      }
       if (this.audioInputContext.state === 'suspended') {
-        await this.audioInputContext.resume();
+        await this.audioInputContext.resume().catch(() => {});
       }
 
       const source = this.audioInputContext.createMediaStreamSource(this.micStream);
@@ -252,11 +310,22 @@ registerProcessor('gemini-audio-recorder-processor', GeminiAudioRecorderProcesso
         this.micProcessor.connect(muteGain);
         muteGain.connect(this.audioInputContext.destination);
       }
+
+      this.micReady = true;
+      if (this.options.onMicStatusChange) {
+        this.options.onMicStatusChange(true);
+      }
     } catch (micErr) {
-      if (micErr.name === 'NotAllowedError' || micErr.name === 'SecurityError') {
-        this.options.onIframeMicBlocked(micErr);
-      } else {
-        this.options.onError(new Error(`Microphone error: ${micErr.message || 'Access denied'}`));
+      this.micReady = false;
+      if (this.options.onMicStatusChange) {
+        this.options.onMicStatusChange(false);
+      }
+      if (!silentIfBlocked) {
+        if (micErr.name === 'NotAllowedError' || micErr.name === 'SecurityError') {
+          this.options.onIframeMicBlocked(micErr);
+        } else {
+          this.options.onError(new Error(`Microphone notice: ${micErr.message || 'Click Mic On to grant access'}`));
+        }
       }
       throw micErr;
     }
@@ -372,8 +441,14 @@ registerProcessor('gemini-audio-recorder-processor', GeminiAudioRecorderProcesso
   }
 
   commitUserTurn() {
-    // Gemini Live server handles VAD automatically; manual nudging only if needed
     this.setState('thinking');
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify({ type: 'commit' }));
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   async handleBridgeMessage(rawData) {
@@ -599,6 +674,7 @@ registerProcessor('gemini-audio-recorder-processor', GeminiAudioRecorderProcesso
       window.__activeGeminiLiveSession = null;
     }
     this.isReady = false;
+    this.micReady = false;
     if (this.animFrameId) {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
@@ -643,18 +719,24 @@ registerProcessor('gemini-audio-recorder-processor', GeminiAudioRecorderProcesso
     }
 
     if (this.ws) {
+      const closingWs = this.ws;
+      this.ws = null;
       try {
-        this.ws.close();
+        closingWs.close(1000, 'Session ended');
       } catch {
         /* ignore */
       }
-      this.ws = null;
     }
   }
 
   stop() {
+    this.stoppedByUser = true;
     this.cleanup();
     this.setState('disconnected');
+  }
+
+  disconnect() {
+    this.stop();
   }
 }
 

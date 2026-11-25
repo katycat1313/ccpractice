@@ -38,7 +38,7 @@ import IframeMicModal from '../components/IframeMicModal';
 import LiveSpeechFeedback from '../components/LiveSpeechFeedback';
 import LivePhraseOverlay from '../components/LivePhraseOverlay';
 import { playTelephoneRing, playPickupClick, playHangupClick } from '../lib/soundUtils';
-import { askGeminiCoach, getGeminiTTSAudio, getGeminiApiKey, researchProspectWithGemini } from '../lib/geminiClient';
+import { askGeminiCoach, getGeminiTTSAudio, researchProspectWithGemini } from '../lib/geminiClient';
 import { getCoachMemory, extractMemoryFromInput, generateMemoryAwareFallback, formatMemoryForPrompt } from '../lib/coachMemory';
 import { getCustomProspects, getSelectedProspectId, setSelectedProspectId } from '../lib/prospectManager';
 import { saveRecording, formatSeconds } from '../lib/recordingsService';
@@ -47,11 +47,9 @@ import {
   pullUpScript, 
   openPracticeSession, 
   resolveAppRoute,
-  COACH_ALL_WHITELISTED_TOOLS,
   COACH_SYSTEM_PROMPT_ENHANCED,
   BUILTIN_TEMPLATES
 } from '../lib/coachActions';
-import { GoogleGenAI } from '@google/genai';
 import { getLearningProgress, LESSON_PATH, recordLearningTurn } from '../lib/learningProgress';
 import { getAdaptiveDifficulty } from '../lib/trainingProgress';
 import { resolveCoachVoice, resolveProspectVoice } from '../lib/voiceResolver';
@@ -332,10 +330,6 @@ export default function CoachPage({ setScript: setGlobalScript, embedded = false
 
   // Mic toggle with AudioContext, getUserMedia, and Deepgram/SpeechRecognition fallback
   const toggleMic = async () => {
-    if (isInIframe) {
-      setIsIframeMicModalOpen(true);
-      return;
-    }
 
     // Use the real session state as the source of truth. During Gemini Live
     // thinking/speaking, isListening can briefly be false; starting another
@@ -422,6 +416,9 @@ export default function CoachPage({ setScript: setGlobalScript, embedded = false
         await audioContextRef.current.resume?.();
       }
     } catch (error) {
+      if (error?.name === 'NotAllowedError' || error?.name === 'SecurityError') {
+        setIsIframeMicModalOpen(true);
+      }
       setMicError(error?.message || 'Permission to access microphone denied by user.');
       return;
     }
@@ -1090,62 +1087,19 @@ CRITICAL RULES:
       return;
     }
 
-    // General AI Call with action block fallback
+    // Server-side Gemini 4 Hydrogen coach route
     try {
-      const clientApiKey = getGeminiApiKey();
-      if (clientApiKey) {
-        try {
-          const ai = new GoogleGenAI({ apiKey: clientApiKey });
-          const response = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
-            contents: [
-              ...messages.slice(-6).map(m => ({
-                role: m.speaker === 'You' ? 'user' : 'model',
-                parts: [{ text: m.text }]
-              })),
-              {
-                role: 'user',
-                parts: [{ text: text }]
-              }
-            ],
-            config: {
-              systemInstruction: `${COACH_SYSTEM_PROMPT_ENHANCED}\n\nADAPTIVE CURRICULUM RULES:\n- Current lesson: ${learningProgress.currentLessonId}.\n- Stage: ${learningProgress.stage}.\n- Baseline turns completed: ${learningProgress.baselineTurns}.\n- Start with explanation and discussion; do not send the user into a prospect call unless they ask or demonstrate readiness.\n- Ask one question at a time, evaluate the answer, and recommend repeat, advance, or practice explicitly.\n- Teach business research hands-on: find credible public information, separate facts from hypotheses, identify likely operational pain points, and prepare respectful personalization.\n- Teach both research-before-call and live qualification. Turn findings into diagnostic questions, verify assumptions on the call, and update the active contractor script with confirmed pain rather than guesses.${activeScriptContext}`,
-              temperature: 0.7,
-              tools: [{ functionDeclarations: COACH_ALL_WHITELISTED_TOOLS }]
-            }
-          });
+      const response = await askGeminiCoach({
+        systemPrompt: `${COACH_SYSTEM_PROMPT_ENHANCED}\n\nADAPTIVE CURRICULUM RULES:\n- Current lesson: ${learningProgress.currentLessonId}.\n- Stage: ${learningProgress.stage}.\n- Baseline turns completed: ${learningProgress.baselineTurns}.\n- Current adaptive difficulty: ${adaptiveDifficulty.level}; ${adaptiveDifficulty.help}.\n- Start with explanation and discussion; do not send the user into a prospect call unless they ask or demonstrate readiness.\n- Ask one question at a time, evaluate the answer, and recommend repeat, advance, or practice explicitly.\n- Teach business research hands-on: find credible public information, separate facts from hypotheses, identify likely operational pain points, and prepare respectful personalization.\n- Teach both research-before-call and live qualification. Turn findings into diagnostic questions, verify assumptions on the call, and update the active contractor script with confirmed pain rather than guesses.${activeScriptContext}`,
+        messages: nextMessages,
+        userMessage: text,
+        currentBusiness: selectedProspect,
+        stage: 'script_building',
+        userMemory: updatedMem
+      });
 
-          // Check for native function calls
-          const functionCalls = response?.functionCalls || [];
-          if (functionCalls.length > 0) {
-            const fc = functionCalls[0];
-            const summary = executeCoachAction(fc.name, fc.args);
-            executedAction = { action: fc.name, summary, args: fc.args };
-            replyText = `Locked in! I executed your request: ${summary}`;
-          }
-
-          if (!replyText && response?.text) {
-            replyText = response.text.trim();
-          }
-        } catch (clientErr) {
-          console.warn('GoogleGenAI direct call notice:', clientErr);
-        }
-      }
-
-      // Backend route fallback
-      if (!replyText) {
-        const response = await askGeminiCoach({
-          systemPrompt: `${COACH_SYSTEM_PROMPT_ENHANCED}\n\nADAPTIVE CURRICULUM RULES:\n- Current lesson: ${learningProgress.currentLessonId}.\n- Stage: ${learningProgress.stage}.\n- Baseline turns completed: ${learningProgress.baselineTurns}.\n- Current adaptive difficulty: ${adaptiveDifficulty.level}; ${adaptiveDifficulty.help}.\n- Start with explanation and discussion; do not send the user into a prospect call unless they ask or demonstrate readiness.\n- Ask one question at a time, evaluate the answer, and recommend repeat, advance, or practice explicitly.\n- Teach business research hands-on: find credible public information, separate facts from hypotheses, identify likely operational pain points, and prepare respectful personalization.\n- Teach both research-before-call and live qualification. Turn findings into diagnostic questions, verify assumptions on the call, and update the active contractor script with confirmed pain rather than guesses.${activeScriptContext}`,
-          messages: nextMessages,
-          userMessage: text,
-          currentBusiness: selectedProspect,
-          stage: 'script_building',
-          userMemory: updatedMem
-        });
-
-        if (response?.text) {
-          replyText = response.text.trim();
-        }
+      if (response?.text) {
+        replyText = response.text.trim();
       }
 
       // Fallback response if completely offline
@@ -1554,10 +1508,6 @@ Coach Marcus, please give me:
                 if (isCallActive) {
                   handleStopCall();
                 } else {
-                  if (isInIframe) {
-                    setIsIframeMicModalOpen(true);
-                    return;
-                  }
                   handleStartCall();
                 }
               }}
@@ -1652,10 +1602,6 @@ Coach Marcus, please give me:
               {!isCallActive && !isRinging ? (
                 <button
                   onClick={() => {
-                    if (isInIframe) {
-                      setIsIframeMicModalOpen(true);
-                      return;
-                    }
                     handleStartCall();
                   }}
                   className="w-16 h-16 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center shadow-lg shadow-indigo-600/40 transition hover:scale-105 active:scale-95 cursor-pointer group"

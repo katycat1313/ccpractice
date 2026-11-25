@@ -86,18 +86,10 @@ export default function DashboardPage({ setScript }) {
 
   const handleSelectAndCall = (prospect) => {
     setSelectedProspectId(prospect.id);
-    if (isInIframe) {
-      setIsIframeMicModalOpen(true);
-      return;
-    }
     navigate('/practice');
   };
 
   const handleInstantWarmup = () => {
-    if (isInIframe) {
-      setIsIframeMicModalOpen(true);
-      return;
-    }
     navigate('/workshops');
   };
 

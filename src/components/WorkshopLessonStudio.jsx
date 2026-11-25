@@ -32,8 +32,7 @@ import {
   Sliders,
   Activity
 } from 'lucide-react';
-import { GoogleGenAI } from '@google/genai';
-import { getGeminiApiKey, askGeminiCoach, getGeminiTTSAudio, researchProspectWithGemini } from '../lib/geminiClient';
+import { askGeminiCoach, getGeminiTTSAudio, researchProspectWithGemini } from '../lib/geminiClient';
 import { resolveCoachVoice, resolveProspectVoice } from '../lib/voiceResolver';
 import { GeminiLiveSession } from '../lib/geminiLiveClient';
 import { saveScriptToScriptsPage, getActiveScript, pullUpScript, openPracticeSession } from '../lib/coachActions';
@@ -560,11 +559,6 @@ export default function WorkshopLessonStudio({
 
   // Mic speech dictation
   const toggleVoiceInput = () => {
-    if (isInIframe) {
-      setIsIframeMicModalOpen(true);
-      return;
-    }
-
     if (isListening) {
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch { /* ignore */ }
@@ -591,7 +585,12 @@ export default function WorkshopLessonStudio({
           setUserSpeechInput(prev => prev ? `${prev} ${text}` : text);
         }
       };
-      rec.onerror = () => setIsListening(false);
+      rec.onerror = (e) => {
+        setIsListening(false);
+        if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
+          setIsIframeMicModalOpen(true);
+        }
+      };
       rec.onend = () => setIsListening(false);
       recognitionRef.current = rec;
       rec.start();
@@ -663,39 +662,15 @@ OUTPUT STRICTLY AS JSON:
 
     try {
       let evaluation = null;
-      const clientApiKey = getGeminiApiKey();
+      const backendRes = await askGeminiCoach({
+        systemPrompt: "You are Marcus Vance evaluating a sales lesson. Return valid JSON only.",
+        userMessage: systemPrompt,
+        stage: 'script_building'
+      });
 
-      if (clientApiKey) {
-        try {
-          const ai = new GoogleGenAI({ apiKey: clientApiKey });
-          const response = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
-            contents: systemPrompt,
-            config: {
-              temperature: 0.5,
-              responseMimeType: 'application/json'
-            }
-          });
-
-          if (response?.text) {
-            evaluation = JSON.parse(response.text);
-          }
-        } catch (apiErr) {
-          console.warn('Direct Gemini flash call fallback:', apiErr);
-        }
-      }
-
-      if (!evaluation) {
-        const backendRes = await askGeminiCoach({
-          systemPrompt: "You are Marcus Vance evaluating a sales lesson. Return valid JSON only.",
-          userMessage: systemPrompt,
-          stage: 'script_building'
-        });
-
-        if (backendRes?.text) {
-          const match = backendRes.text.match(/\{[\s\S]*\}/);
-          if (match) evaluation = JSON.parse(match[0]);
-        }
+      if (backendRes?.text) {
+        const match = backendRes.text.match(/\{[\s\S]*\}/);
+        if (match) evaluation = JSON.parse(match[0]);
       }
 
       // Fallback evaluation if offline

@@ -240,11 +240,6 @@ ${(prospect.commonObjections || []).map((o, idx) => `   - Objection #${idx + 1}:
       /* ignore */
     }
 
-    if (isInIframe) {
-      setIsIframeMicModalOpen(true);
-      return;
-    }
-
     setIsDialing(true);
     setPostCallFeedback(null);
     setTranscriptTurns([]);
@@ -281,7 +276,7 @@ ${(prospect.commonObjections || []).map((o, idx) => `   - Objection #${idx + 1}:
 
     // Start browser speech recognition to capture exact words simultaneously
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRec && !isInIframe) {
+    if (SpeechRec) {
       try {
         const recognition = new SpeechRec();
         recognition.continuous = true;

@@ -159,11 +159,6 @@ export default function WorkshopsPage() {
 
   // Voice speech-to-text dictation
   const toggleVoiceInput = () => {
-    if (isInIframe) {
-      setIsIframeMicModalOpen(true);
-      return;
-    }
-
     if (isListening) {
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch { /* ignore */ }
@@ -193,7 +188,7 @@ export default function WorkshopsPage() {
       };
       recognition.onerror = (e) => {
         setIsListening(false);
-        if (isInIframe || e?.error === 'not-allowed') {
+        if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
           setIsIframeMicModalOpen(true);
         }
       };
